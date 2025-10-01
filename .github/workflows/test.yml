@@ -1,0 +1,70 @@
+name: Test
+
+on:
+  push:
+    branches: [ "*" ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+
+    env:
+      ONCHAIN_ORACLE_ADDRESS: "0x74661a9ea74fD04975c6eBc6B155Abf8f885636c"
+      ORACLE_API_TIER: "demo"
+      RPC_URL: "http://127.0.0.1:8545"
+      MAINNET_RPC_URL: ${{ secrets. MAINNET_RPC_URL }}
+      ORACLE_API_KEY: ${{ secrets.ORACLE_API_KEY }}
+      PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+      ORACLE_API_URL: ${{ secrets.ORACLE_API_URL }}
+      SUBGRAPH_URL: ${{ secrets. SUBGRAPH_URL }}
+      START_ANVIL: false
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22.x]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT }}
+          submodules: recursive
+      
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Install Foundry dependencies  
+        run: forge install
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 9
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: "pnpm"
+
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check
+        run: pnpm exec tsc --noEmit
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Start Anvil and run tests
+        run: |
+          nohup anvil --fork-url "$MAINNET_RPC_URL" --fork-block-number 23227726 --port 8545 > anvil.log 2>&1 &
+          for i in {1..30}; do
+            if curl -s http://127.0.0.1:8545 >/dev/null; then break; fi
+            sleep 1
+          done
+          pnpm run test
+
+      - name: Build
+        run: pnpm run build

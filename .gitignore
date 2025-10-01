@@ -1,0 +1,13 @@
+.vscode/
+node_modules/
+dist/
+.DS_Store
+.env*
+!.env.example
+.secrets
+test/script/test-addresses.env
+broadcast/
+cache/
+out/
+.codeql-db
+codeql-results.sarif

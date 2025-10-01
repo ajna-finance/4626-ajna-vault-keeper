@@ -1,0 +1,21 @@
+[profile.default]
+src = "src/contracts"
+out = "out"
+libs = ["lib"]
+script = "test/script"
+auto_detect_remappings = false
+fs_permissions = [
+    { access = "read-write", path = "./test/script/" }
+]
+
+remappings = [
+    "forge-std/=lib/forge-std/src/",
+    "ajna-core/=lib/4626-ajna-vault/lib/ajna-core/src/",
+    "@openzeppelin/=lib/4626-ajna-vault/lib/ajna-core/lib/openzeppelin-contracts/",
+    "@prb-math/=lib/4626-ajna-vault/lib/ajna-core/lib/prb-math/"
+]
+
+[rpc_endpoints]
+anvil = "http://127.0.0.1:8545"
+
+solc_version = "0.8.18"

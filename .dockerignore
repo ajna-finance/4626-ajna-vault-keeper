@@ -1,0 +1,30 @@
+# deps & build output
+node_modules
+dist
+lib
+
+# VCS / IDE / OS
+.git
+.gitmodules
+.gitignore
+.vscode
+.DS_Store
+vitest.config.*
+
+# secrets
+.secrets
+
+# linters/formatters/docs
+.eslint*
+.prettier*
+README.md
+
+# forge/anvil
+broadcast/
+cache/
+out/
+foundry.toml
+
+# codeql
+.codeql-db
+codeql-results.sarif

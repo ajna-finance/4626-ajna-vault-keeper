@@ -1,0 +1,6 @@
+[submodule "lib/forge-std"]
+	path = lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "lib/4626-ajna-vault"]
+	path = lib/4626-ajna-vault
+	url = https://github.com/ajna-finance/4626-ajna-vault

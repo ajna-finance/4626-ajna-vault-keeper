@@ -1,0 +1,43 @@
+{
+  "name": "4626-ajna-keeper",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "test:unit": "cp .env .env.test; vitest run --config vitest.unit.config.ts && rm -f .env.test",
+    "test:integration": "cp .env .env.test; INTEGRATION=true vitest run --config vitest.integration.config.ts && rm -f .env.test",
+    "test": "pnpm run test:unit && pnpm run test:integration",
+    "format": "prettier --write \"src/**/*.{ts,js}\" \"test/**/*.{ts,js}\"",
+    "build": "tsup src/index.ts --format esm --clean",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint --ext .ts,.js src",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "precommit": "pnpm format && pnpm typecheck && pnpm lint && pnpm test",
+    "docker:build:local": "docker build --target local -t ajna-erc4626-keeper:local .",
+    "docker:run:local": "docker run --rm ajna-erc4626-keeper:local",
+    "docker:build:prod": "docker build -t ajna-erc4626-keeper ."
+  },
+  "dependencies": {
+    "dotenv": "17.2.1",
+    "graphql-request": "7.2.0",
+    "pino": "9.7.0",
+    "viem": "2.33.2"
+  },
+  "devDependencies": {
+    "@types/node": "24.2.0",
+    "@typescript-eslint/eslint-plugin": "8.39.0",
+    "@typescript-eslint/parser": "8.39.0",
+    "eslint": "9.32.0",
+    "eslint-config-prettier": "10.1.8",
+    "globals": "16.3.0",
+    "prettier": "3.6.2",
+    "tsup": "8.5.0",
+    "tsx": "4.20.3",
+    "typescript": "5.9.2",
+    "vitest": "3.2.4"
+  }
+}

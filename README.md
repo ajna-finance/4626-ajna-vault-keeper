@@ -174,7 +174,14 @@ First, complete the above steps for local configuration and set up. Then, instal
 curl -L https://foundry.paradigm.xyz | bash
 ```
 
-After following the instructions that will appear from `foundryup`, run the tests:
+After following the instructions that will appear from `foundryup`, install the vault's submodules:
+
+```
+cd lib/4626-ajna-vault/
+forge install
+```
+
+Then (after navigating back to the root of the keeper repo) run the tests:
 
 ```
 pnpm test

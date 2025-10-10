@@ -9,4 +9,9 @@ export const getBankruptcyTime = async (index: bigint) => {
   return await bucketInfo[2];
 };
 
+export const getBucketLps = async (index: bigint) => {
+  const bucketInfo = await getBucketInfo(index);
+  return await bucketInfo[0];
+};
+
 export const updateInterest = () => pool().write.updateInterest();

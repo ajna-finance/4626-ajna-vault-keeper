@@ -9,8 +9,8 @@ import {
   getBufferAddress,
   getPoolInfoUtilsAddress,
   getPoolAddress,
-  getLpToValue,
   drain,
+  getDustThreshold,
 } from '../../src/vault/vault';
 import { getBufferTotal } from '../../src/vault/buffer';
 import { getHtp, getPriceToIndex, getQtValue } from '../../src/ajna/poolInfoUtils';
@@ -31,6 +31,11 @@ describe('vault interface', () => {
     expect(decimals).toBe(18);
   });
 
+  it('can calculate dust threshold', async () => {
+    const dustThreshold = await getDustThreshold();
+    expect(dustThreshold).toBe(1000001n);
+  });
+
   it('can query paused status', async () => {
     const paused = await isPaused();
     expect(paused).toBe(false);
@@ -44,11 +49,6 @@ describe('vault interface', () => {
     expect(buffer).toBe('0x787B797Ed807E5882d1a7bE68C4D742289df32a5');
     expect(info).toBe('0x30c5eF2997d6a882DE52c4ec01B6D0a5e5B4fAAE');
     expect(pool).toBe('0x34bC3D3d274A355f3404c5dEe2a96335540234de');
-  });
-
-  it('can query lpToValue', async () => {
-    const value = await getLpToValue(4156n);
-    expect(value).toBe(0n);
   });
 
   it('can drain bucket', async () => {

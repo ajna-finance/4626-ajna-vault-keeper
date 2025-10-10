@@ -10,15 +10,15 @@ import { getBufferRatio, getMinBucketIndex } from './vault/vaultAuth';
 import {
   getAssetDecimals,
   getBuckets,
-  getLpToValue,
   getTotalAssets,
   isPaused,
   move,
   moveFromBuffer,
   moveToBuffer,
   drain,
+  getDustThreshold,
 } from './vault/vault';
-import { getBankruptcyTime, updateInterest } from './ajna/pool';
+import { getBankruptcyTime, getBucketLps, updateInterest } from './ajna/pool';
 
 type KeeperRunData = {
   buckets: readonly bigint[];
@@ -234,8 +234,9 @@ export async function isOptimalBucketInRange(data: KeeperRunData): Promise<boole
 }
 
 async function isOptimalBucketDusty(data: KeeperRunData): Promise<boolean> {
-  const lpToValue = await getLpToValue(data.optimalBucket);
-  return lpToValue !== 0n && lpToValue <= 1000000n;
+  const bucketLps = await getBucketLps(data.optimalBucket);
+  const dustThreshold = await getDustThreshold();
+  return bucketLps !== 0n && bucketLps < dustThreshold;
 }
 
 async function isOptimalBucketRecentlyBankrupt(data: KeeperRunData): Promise<boolean> {

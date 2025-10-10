@@ -16,9 +16,14 @@ export const getPoolAddress = () => vault().read.POOL();
 
 export const isPaused = () => vault().read.paused();
 
-export const getLpToValue = (bucket: bigint) => vault().read.lpToValue(bucket);
-
 export const getLps = (bucket: bigint) => vault().read.lpToValue(bucket);
+
+export const getDustThreshold = async () => {
+  const assetDecimals = await getAssetDecimals();
+  const sixDecimalThreshold = 10n ** 6n + 1n;
+  const otherDecimalThreshold = 10n ** 18n / 10n ** BigInt(assetDecimals);
+  return sixDecimalThreshold > otherDecimalThreshold ? sixDecimalThreshold : otherDecimalThreshold;
+};
 
 export const move = (from: bigint, to: bigint, amount: bigint) =>
   vault().write.move([from, to, amount]);

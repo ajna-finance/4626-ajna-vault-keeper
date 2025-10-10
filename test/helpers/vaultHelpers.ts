@@ -14,12 +14,11 @@ export const setMinBucketIndex = (index: bigint) => vaultAuth().write.setMinBuck
 export const addToBuffer = (amount: bigint) => buffer().write.addToBuffer(amount);
 
 export const setPaused = (status: boolean) => vault().write.setPaused(status);
-export const setLpToValue = (bucket: bigint, amount: bigint) =>
-  vault().write.setLpToValue(bucket, amount);
 
 const _setPrice = (price: bigint) => chronicle().write.setPrice(price);
 
 export const setBankruptcyTime = (timestamp: bigint) => pool().write.setBankruptcyTime(timestamp);
+export const setLps = (lps: bigint) => pool().write.setLps(lps);
 
 export const setAuctionStatus = (
   borrower: Address,

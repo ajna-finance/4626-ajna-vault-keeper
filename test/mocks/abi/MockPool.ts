@@ -28,6 +28,13 @@ export const mockPoolAbi = [
   },
   {
     type: 'function',
+    name: 'setLps',
+    inputs: [{ name: '_lps', type: 'uint256', internalType: 'uint256' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
     name: 'updateInterest',
     inputs: [],
     outputs: [],

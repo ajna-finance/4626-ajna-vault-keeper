@@ -8,7 +8,7 @@ vi.mock('graphql-request', async () => {
 import {
   setAuctionStatus,
   setBankruptcyTime,
-  setLpToValue,
+  setLps,
   setMockState,
   setPaused,
   useMocks,
@@ -17,7 +17,7 @@ import { getBuckets } from '../../src/vault/vault';
 import { getQtValue } from '../../src/ajna/poolInfoUtils';
 import { run } from '../../src/keeper';
 import { client } from '../../src/utils/client';
-import { mockRun } from '../mocks/mockKeeper';
+import { env } from '../../src/utils/env';
 import { request } from 'graphql-request';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -56,17 +56,20 @@ describe('keeper run failure', () => {
   });
 
   it('skips run if optimal bucket is out of range', async () => {
-    await mockRun(-15n);
+    env.OPTIMAL_BUCKET_DIFF = 15n;
+    await run();
 
     const buckets = await getBuckets();
     for (let i = 0; i < buckets.length - 2; i++) {
       const balance = await getQtValue(buckets[i]);
       expect(balance).toBe(100000000000000000000n);
     }
+
+    env.OPTIMAL_BUCKET_DIFF = 1n;
   });
 
   it('skips run if optimal bucket is dusty', async () => {
-    await setLpToValue(4157n, 100000n);
+    await setLps(100000n);
     await run();
 
     const buckets = await getBuckets();

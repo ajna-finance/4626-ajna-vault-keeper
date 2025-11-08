@@ -72,13 +72,15 @@ async function rebalanceBuckets(data: KeeperRunData): Promise<void> {
 
     const bucketValue = await getQtValue(bucket);
     const operations = planBucketOperations(bucket, bucketValue, bufferNeeded, data, i);
+    let success = [];
 
     for (const op of operations) {
-      await executeMoveOperation(op);
+      const result = await executeMoveOperation(op);
+      success.push(result);
     }
 
     bufferNeeded = operations.reduce(
-      (needed, op) => (op.to === 'Buffer' ? needed - op.amount : needed),
+      (needed, op, i) => (op.to === 'Buffer' && success[i] ? needed - op.amount : needed),
       bufferNeeded,
     );
   }
@@ -144,21 +146,21 @@ function planBucketOperations(
 
 // ============= Move Execution =============
 
-async function executeMoveOperation(op: MoveOperation): Promise<void> {
+async function executeMoveOperation(op: MoveOperation): Promise<boolean> {
   if (op.from === 'Buffer') {
-    await handleTransaction(moveFromBuffer(op.to as bigint, op.amount), {
+    return await handleTransaction(moveFromBuffer(op.to as bigint, op.amount), {
       action: 'moveFromBuffer',
       to: op.to,
       amount: op.amount,
     });
   } else if (op.to === 'Buffer') {
-    await handleTransaction(moveToBuffer(op.from, op.amount), {
+    return await handleTransaction(moveToBuffer(op.from, op.amount), {
       action: 'moveToBuffer',
       from: op.from,
       amount: op.amount,
     });
   } else {
-    await handleTransaction(move(op.from, op.to, op.amount), {
+    return await handleTransaction(move(op.from, op.to, op.amount), {
       action: 'move',
       from: op.from,
       to: op.to,
@@ -188,13 +190,13 @@ async function fillBufferDeficit(needed: bigint, data: KeeperRunData): Promise<v
 
     const amountToMove = bucketValue >= remaining ? remaining : bucketValue;
 
-    await handleTransaction(moveToBuffer(bucket, amountToMove), {
+    const success = await handleTransaction(moveToBuffer(bucket, amountToMove), {
       action: 'moveToBuffer',
       from: bucket,
       amount: amountToMove,
     });
 
-    remaining -= amountToMove;
+    if (success) remaining -= amountToMove;
   }
 }
 

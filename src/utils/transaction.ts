@@ -33,6 +33,7 @@ export async function handleTransaction(tx: Promise<Hash>, context?: Record<stri
       { event: 'tx_success', hash, block: receipt.blockNumber, ...context },
       `move confirmed`,
     );
+    return true;
   } catch (err) {
     const receipt = (err as any)?.receipt as TransactionReceipt | undefined;
     const phase = receipt ? 'revert' : hash ? 'fail' : 'send';
@@ -40,5 +41,6 @@ export async function handleTransaction(tx: Promise<Hash>, context?: Record<stri
       { event: 'tx_failed', phase, hash, block: receipt?.blockNumber, receipt, err, ...context },
       `move failed`,
     );
+    return false;
   }
 }

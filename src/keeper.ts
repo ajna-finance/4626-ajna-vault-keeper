@@ -28,6 +28,7 @@ type KeeperRunData = {
   htp: BucketPrice;
   price: bigint;
   optimalBucket: bigint;
+  minAmount: bigint;
 };
 
 type BucketPrice = {
@@ -88,7 +89,7 @@ async function rebalanceBuffer(data: KeeperRunData): Promise<void> {
   const newBufferTotal = await getBufferTotal();
   const difference = newBufferTotal - data.bufferTarget;
 
-  if (difference === 0n) return;
+  if (Math.abs(Number(difference)) < data.minAmount) return;
 
   if (difference > 0n) {
     await moveExcessFromBuffer(difference, data.optimalBucket);
@@ -110,7 +111,7 @@ function planBucketOperations(
 ): MoveOperation[] {
   const operations: MoveOperation[] = [];
 
-  if (bufferNeeded === 0n) {
+  if (bufferNeeded < data.minAmount) {
     operations.push({
       from: bucket,
       to: data.optimalBucket,
@@ -179,12 +180,12 @@ async function moveExcessFromBuffer(amount: bigint, targetBucket: bigint): Promi
 async function fillBufferDeficit(needed: bigint, data: KeeperRunData): Promise<void> {
   let remaining = needed;
 
-  for (let i = 0; i < data.buckets.length && remaining > 0n; i++) {
+  for (let i = 0; i < data.buckets.length && remaining > data.minAmount; i++) {
     const bucket = data.buckets[i]!;
     await drain(bucket);
     const bucketValue = await getQtValue(bucket);
 
-    if (bucketValue === 0n) continue;
+    if (bucketValue < data.minAmount) continue;
 
     const amountToMove = bucketValue >= remaining ? remaining : bucketValue;
 
@@ -290,6 +291,7 @@ export async function _getKeeperData(): Promise<KeeperRunData> {
     htp: { price: htp, index: htpIndex },
     price: BigInt(price),
     optimalBucket,
+    minAmount: env.MIN_MOVE_AMOUNT,
   };
 }
 

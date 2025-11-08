@@ -26,7 +26,9 @@ if (process.env.ONCHAIN_ORACLE_PRIMARY === 'true' && !process.env.ONCHAIN_ORACLE
   throw new Error('oracle smart contract address must be specified');
 }
 
-const minAmount = process.env.MIN_MOVE_AMOUNT ?? 1000000;
+// Assumes LP_DUST = 1e6 + 1, because assetDecimals cannot be queried here.
+// If LP_DUST != 1e6 + 1, MIN_MOVE_AMOUNT should be set as an environment variable.
+const minAmount = process.env.MIN_MOVE_AMOUNT ?? 1000001;
 
 // Defaults to 72 hours (seconds)
 const minTimeSinceBankruptcy = process.env.MIN_TIME_SINCE_BANKRUPTCY ?? 259200;

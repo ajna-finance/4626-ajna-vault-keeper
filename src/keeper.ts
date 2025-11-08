@@ -267,13 +267,12 @@ async function verifyBufferTarget(target: bigint): Promise<void> {
 // ============= Data Fetching =============
 
 export async function _getKeeperData(): Promise<KeeperRunData> {
-  const [buckets, bufferTotal, lup, htp, price, bufferTarget] = await Promise.all([
+  const [buckets, bufferTotal, lup, htp, price] = await Promise.all([
     getBuckets(),
     getBufferTotal(),
     getLup(),
     getHtp(),
-    getPrice(),
-    _calculateBufferTarget(),
+    getPrice()
   ]);
 
   const [lupIndex, htpIndex, optimalBucket] = await Promise.all([
@@ -281,6 +280,12 @@ export async function _getKeeperData(): Promise<KeeperRunData> {
     getPriceToIndex(htp),
     _calculateOptimalBucket(price),
   ]);
+
+  for (let i = 0; i < buckets.length; i++) {
+    drain(buckets[i]);
+  }
+
+  const bufferTarget = await _calculateBufferTarget();
 
   return {
     buckets,

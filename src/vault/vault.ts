@@ -16,7 +16,7 @@ export const getPoolAddress = () => vault().read.POOL();
 
 export const isPaused = () => vault().read.paused();
 
-export const getLps = (bucket: bigint) => vault().read.lpToValue(bucket);
+export const getLps = (bucket: bigint) => vault().read.lps(bucket);
 
 export const getDustThreshold = async () => {
   const assetDecimals = await getAssetDecimals();

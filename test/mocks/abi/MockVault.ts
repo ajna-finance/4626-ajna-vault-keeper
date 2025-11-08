@@ -13,6 +13,13 @@ export const mockVaultAbi = [
   },
   {
     type: 'function',
+    name: 'lps',
+    stateMutability: 'view',
+    inputs: [{ name: '', type: 'uint256' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
     name: 'INFO',
     inputs: [],
     outputs: [{ name: '', type: 'address' }],

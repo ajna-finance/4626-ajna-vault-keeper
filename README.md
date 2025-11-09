@@ -43,10 +43,11 @@ Due to LUP and HTP shifting dynamically with pool activity, the in-range boundar
 | `MIN_MOVE_AMOUNT`              | Skip moves if bucket's quote token balance is below this amount (dust limit) - enforced by vault.    | Integer (WAD units)      | Optional                                       | 1,000,000        |
 | `MIN_TIME_SINCE_BANKRUPTCY`    | Minimum time since bucket bankruptcy to be considered valid. Abort keeper run if timestamp is between this value and current time.                     | Integer (seconds)        | Optional                                       | 259,200  (72h)    |
 | `MAX_AUCTION_AGE`              | Only consider auctions with bad debt if they are older than this value.                                    | Integer (seconds)        | Optional                                       | 259,200  (72h)    |
+| `EXIT_ON_SUBGRAPH_FAILURE` | Abort run if the subgraph query fails during the check for bad debt in the pool. | String (`true`/`false`) | Optional | `false`
 | `ORACLE_API_KEY`               | CoinGecko API key.                                                               | String                   | Optional                                       | None             |
 | `ORACLE_KEY_TIER`              | CoinGecko tier (`demo`, `pro`).                                                  | String                   | Conditional (if `ORACLE_API_KEY` set)          | None             |
 | `ONCHAIN_ORACLE_ADDRESS`       | Address of Chronicle on-chain oracle.                                            | Ethereum address (`0x…`) | Conditional (if `ONCHAIN_ORACLE_PRIMARY=true`) | None             |
-| `ONCHAIN_ORACLE_PRIMARY`       | Use on-chain oracle as primary instead of CoinGecko.                             | Boolean (`true/false`)   | Optional                                       | false            |
+| `ONCHAIN_ORACLE_PRIMARY`       | Use on-chain oracle as primary instead of CoinGecko.                             | String (`true`/`false`)   | Optional                                       | false            |
 | `ONCHAIN_ORACLE_MAX_STALENESS` | Max allowed age of on-chain price data.                                          | Integer (seconds)        | Conditional (if `ONCHAIN_ORACLE_PRIMARY=true`) | 43,200 (12h)     |
 
 

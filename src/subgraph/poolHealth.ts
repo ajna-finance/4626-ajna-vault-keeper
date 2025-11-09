@@ -16,7 +16,8 @@ type LiquidationAuction = {
 
 export async function poolHasBadDebt(): Promise<boolean> {
   const unfilteredAuctions = await _getUnsettledAuctions();
-  const auctionsBeforeCutoff = _filterAuctions(unfilteredAuctions);
+  if (unfilteredAuctions === 'error') return true;
+  const auctionsBeforeCutoff = _filterAuctions(unfilteredAuctions as GetUnsettledAuctionsResponse);
 
   for (let i = 0; i < auctionsBeforeCutoff.length; i++) {
     const [kickTime, collateralRemaining, debtRemaining] = await getAuctionStatus(
@@ -29,7 +30,7 @@ export async function poolHasBadDebt(): Promise<boolean> {
   return false;
 }
 
-export async function _getUnsettledAuctions(): Promise<GetUnsettledAuctionsResponse> {
+export async function _getUnsettledAuctions(): Promise<GetUnsettledAuctionsResponse | string> {
   try {
     const poolAddress = (await getPoolAddress()).toLowerCase();
     const subgraphUrl = env.SUBGRAPH_URL;
@@ -51,10 +52,10 @@ export async function _getUnsettledAuctions(): Promise<GetUnsettledAuctionsRespo
   } catch (err) {
     log.error(
       { event: 'subgraph_query_failed', url: env.SUBGRAPH_URL, err },
-      'subgraph query failed, continuing with keeper run optimistically',
+      'subgraph query failed',
     );
 
-    return { liquidationAuctions: [] };
+    return env.EXIT_ON_SUBGRAPH_FAILURE ? 'error' : { liquidationAuctions: [] };
   }
 }
 

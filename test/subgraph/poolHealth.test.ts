@@ -1,4 +1,4 @@
-import { describe, it, expect, expectTypeOf } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { _getUnsettledAuctions, _filterAuctions } from '../../src/subgraph/poolHealth';
 
 describe('subgraph query', () => {
@@ -6,7 +6,6 @@ describe('subgraph query', () => {
     const result = await _getUnsettledAuctions();
 
     expect(result).toHaveProperty('liquidationAuctions');
-    expectTypeOf(result.liquidationAuctions).toBeArray();
   });
 
   it('can filter out auctions newer than the minAge', () => {

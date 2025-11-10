@@ -272,7 +272,7 @@ export async function _getKeeperData(): Promise<KeeperRunData> {
     getBufferTotal(),
     getLup(),
     getHtp(),
-    getPrice()
+    getPrice(),
   ]);
 
   const [lupIndex, htpIndex, optimalBucket] = await Promise.all([

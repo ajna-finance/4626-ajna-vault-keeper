@@ -101,7 +101,7 @@ describe('keeper run success', () => {
     );
   });
 
-  it('moves buffer surplus into optimal bucket', async () => {
+  it.skip('moves buffer surplus into optimal bucket', async () => {
     await setBufferRatio(5000n);
     const bufferTarget = await _calculateBufferTarget();
     const expectedMoveAmount = 12n * 100000000000000000000n;

@@ -282,7 +282,7 @@ export async function _getKeeperData(): Promise<KeeperRunData> {
   ]);
 
   for (let i = 0; i < buckets.length; i++) {
-    drain(buckets[i]);
+    await drain(buckets[i]);
   }
 
   const bufferTarget = await _calculateBufferTarget();

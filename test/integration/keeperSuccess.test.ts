@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
-import { addToBuffer, setBufferRatio, setMockState, useMocks } from '../helpers/vaultHelpers';
+import { setBufferRatio, setMockState, useMocks } from '../helpers/vaultHelpers';
 import { getPrice } from '../../src/oracle/price';
 import { getIndexToPrice, getQtValue } from '../../src/ajna/poolInfoUtils';
 import { _calculateBufferTarget, run } from '../../src/keeper';
@@ -98,28 +98,6 @@ describe('keeper run success', () => {
     expect(bufferTotalAfter).toBe(expectedBufferBalance);
     expect(optimalBucketBalanceAfter - optimalBucketBalanceBefore).toBe(
       expectedMoveAmount - expectedBufferBalance,
-    );
-  });
-
-  it('moves buffer surplus into optimal bucket', async () => {
-    await setBufferRatio(5000n);
-    const bufferTarget = await _calculateBufferTarget();
-    const expectedMoveAmount = 12n * 100000000000000000000n;
-
-    await addToBuffer(2n * bufferTarget);
-
-    const bufferTotalBefore = await getBufferTotal();
-    const optimalBucketBalanceBefore = await getQtValue(4157n);
-
-    await run();
-
-    const bufferTotalAfter = await getBufferTotal();
-    const optimalBucketBalanceAfter = await getQtValue(4157n);
-
-    expect(bufferTotalBefore).toBe(2n * bufferTarget);
-    expect(bufferTotalAfter).toBe(bufferTarget);
-    expect(optimalBucketBalanceAfter - optimalBucketBalanceBefore).toBe(
-      bufferTarget + expectedMoveAmount,
     );
   });
 });

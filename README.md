@@ -99,8 +99,8 @@ Due to LUP and HTP shifting dynamically with pool activity, the in-range boundar
       * `Move(fromBucket, toBucket, amount)` - vault function and event that shifts liquidity directly between buckets. The keeper uses it when consolidating out-of-range buckets into the `optimalBucket` without touching the Buffer.
       * `MoveFromBuffer(toBucket, amount)` - vault function and event that moves liquidity out of the Buffer into a bucket. The keeper calls this to drain Buffer surplus or to place funds into the `optimalBucket`.
       * `MoveToBuffer(fromBucket, amount)` - vault function and event that withdraws liquidity from a bucket into the Buffer; the keeper uses it to top up the Buffer or cover a deficit.
-    * Off-chain logs (via keeper `log` and `handleTransaction`)
-      * Run-level:
+    * Off-chain logs (pino-formatted JSON; filterable by event field)
+      * Logger events:
         * `keeper_run_succeeded` - final state with buffer total, buffer target, current price, and optimal bucket.
         * `keeper_run_failed` - run aborted with error details.
         * `keeper_stopping` - process shutdown (SIGINT/SIGTERM).
@@ -109,6 +109,9 @@ Due to LUP and HTP shifting dynamically with pool activity, the in-range boundar
         * `tx_failed` - failed tx with phase (`send`, `fail`, `revert`), hash, receipt, and context.
       * Warnings:
         * `buffer_imbalance` - emitted when the Buffer total does not match the computed bufferTarget after rebalancing (indicating a residual surplus/deficit).
+      * Errors:
+        * `uncaught_exception` - an unhandled error crashed the keeper process.
+        * `unhandled_rejection` - an unhandled promise rejection crashed the keeper process.
 
 ## Local Set Up
 

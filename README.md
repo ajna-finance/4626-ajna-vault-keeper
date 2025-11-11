@@ -109,7 +109,9 @@ Due to LUP and HTP shifting dynamically with pool activity, the in-range boundar
         * `tx_failed` - failed tx with phase (`send`, `fail`, `revert`), hash, receipt, and context.
       * Warnings:
         * `buffer_imbalance` - emitted when the Buffer total does not match the computed bufferTarget after rebalancing (indicating a residual surplus/deficit).
-      * Errors:
+        * `price_query_failed` - query failed for the first of the two configured price feeds.
+      * Other errors:
+        * `subgraph_query_failed` - query for open auctions via configured subgraph threw an error.
         * `uncaught_exception` - an unhandled error crashed the keeper process.
         * `unhandled_rejection` - an unhandled promise rejection crashed the keeper process.
 

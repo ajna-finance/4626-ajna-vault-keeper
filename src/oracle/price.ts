@@ -25,7 +25,7 @@ export async function getPrice(): Promise<bigint> {
       }
     } catch (err) {
       log.warn(
-        { event: 'price_query', err, tag },
+        { event: 'price_query_failed', err, tag },
         'primary price source failed, trying secondary source',
       );
     }

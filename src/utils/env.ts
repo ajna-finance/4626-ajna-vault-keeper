@@ -34,6 +34,9 @@ const minTimeSinceBankruptcy = process.env.MIN_TIME_SINCE_BANKRUPTCY ?? 259200;
 // Defaults to 72 hours (seconds)
 const maxAuctionAge = process.env.MAX_AUCTION_AGE ?? 259200;
 
+// Defaults to 2 minutes (seconds)
+const futureSkewTolerance = process.env.FUTURE_SKEW_TOLERANCE ?? 120;
+
 export const env = {
   KEEPER_INTERVAL_MS: Number(process.env.KEEPER_INTERVAL_MS),
   VAULT_ADDRESS: process.env.VAULT_ADDRESS,
@@ -51,9 +54,10 @@ export const env = {
   ONCHAIN_ORACLE_ADDRESS: process.env.ONCHAIN_ORACLE_ADDRESS,
   ONCHAIN_ORACLE_MAX_STALENESS: process.env.ONCHAIN_ORACLE_MAX_STALENESS
     ? Number(process.env.ONCHAIN_ORACLE_MAX_STALENESS)
-    : undefined,
+    : null,
   LOG_LEVEL: process.env.LOG_LEVEL,
   SUBGRAPH_URL: process.env.SUBGRAPH_URL,
   MIN_TIME_SINCE_BANKRUPTCY: BigInt(minTimeSinceBankruptcy),
   MAX_AUCTION_AGE: Number(maxAuctionAge),
+  FUTURE_SKEW_TOLERANCE: Number(futureSkewTolerance),
 };

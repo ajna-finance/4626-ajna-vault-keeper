@@ -1,7 +1,7 @@
 import { env } from './utils/env';
 import { log } from './utils/logger';
 import { toWad } from './utils/decimalConversion';
-import { handleTransaction } from './utils/transaction';
+import { handleTransaction, type TransactionData } from './utils/transaction';
 import { getPrice } from './oracle/price';
 import { poolHasBadDebt } from './subgraph/poolHealth';
 import { getBufferTotal } from './vault/buffer';
@@ -72,17 +72,18 @@ async function rebalanceBuckets(data: KeeperRunData): Promise<void> {
 
     const bucketValue = await getQtValue(bucket);
     const operations = planBucketOperations(bucket, bucketValue, bufferNeeded, data, i);
-    let success = [];
+    let results = [];
 
     for (const op of operations) {
-      const result = await executeMoveOperation(op);
-      success.push(result);
+      const txData = await executeMoveOperation(op);
+      results.push(txData);
     }
 
-    bufferNeeded = operations.reduce(
-      (needed, op, i) => (op.to === 'Buffer' && success[i] ? needed - op.amount : needed),
-      bufferNeeded,
-    );
+    bufferNeeded = operations.reduce((needed, op, i) => {
+      const tx = results[i];
+      if (!tx || !tx.status) return needed;
+      return op.to === 'Buffer' ? needed - tx.assets : needed;
+    }, bufferNeeded);
   }
 }
 
@@ -146,22 +147,22 @@ function planBucketOperations(
 
 // ============= Move Execution =============
 
-async function executeMoveOperation(op: MoveOperation): Promise<boolean> {
+async function executeMoveOperation(op: MoveOperation): Promise<TransactionData> {
   if (op.from === 'Buffer') {
     return await handleTransaction(moveFromBuffer(op.to as bigint, op.amount), {
-      action: 'moveFromBuffer',
+      action: 'MoveFromBuffer',
       to: op.to,
       amount: op.amount,
     });
   } else if (op.to === 'Buffer') {
     return await handleTransaction(moveToBuffer(op.from, op.amount), {
-      action: 'moveToBuffer',
+      action: 'MoveToBuffer',
       from: op.from,
       amount: op.amount,
     });
   } else {
     return await handleTransaction(move(op.from, op.to, op.amount), {
-      action: 'move',
+      action: 'Move',
       from: op.from,
       to: op.to,
       amount: op.amount,
@@ -172,7 +173,7 @@ async function executeMoveOperation(op: MoveOperation): Promise<boolean> {
 async function moveExcessFromBuffer(amount: bigint, targetBucket: bigint): Promise<void> {
   await drain(targetBucket);
   await handleTransaction(moveFromBuffer(targetBucket, amount), {
-    action: 'moveFromBuffer',
+    action: 'MoveFromBuffer',
     to: targetBucket,
     amount: amount,
   });
@@ -190,13 +191,13 @@ async function fillBufferDeficit(needed: bigint, data: KeeperRunData): Promise<v
 
     const amountToMove = bucketValue >= remaining ? remaining : bucketValue;
 
-    const success = await handleTransaction(moveToBuffer(bucket, amountToMove), {
-      action: 'moveToBuffer',
+    const txData = await handleTransaction(moveToBuffer(bucket, amountToMove), {
+      action: 'MoveToBuffer',
       from: bucket,
       amount: amountToMove,
     });
 
-    if (success) remaining -= amountToMove;
+    if (txData.status) remaining -= txData.assets;
   }
 }
 

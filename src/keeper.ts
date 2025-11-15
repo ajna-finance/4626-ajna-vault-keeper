@@ -97,7 +97,7 @@ async function rebalanceBuffer(data: KeeperRunData): Promise<void> {
     await fillBufferDeficit(-difference, data);
   }
 
-  await verifyBufferTarget(data.bufferTarget);
+  await verifyBufferTarget(data);
 }
 
 // ============= Operation Planning =============
@@ -255,12 +255,12 @@ function calculateBufferDeficit(data: KeeperRunData): bigint {
   return data.bufferTarget > data.bufferTotal ? data.bufferTarget - data.bufferTotal : 0n;
 }
 
-async function verifyBufferTarget(target: bigint): Promise<void> {
+async function verifyBufferTarget(data: KeeperRunData): Promise<void> {
   const actual = await getBufferTotal();
-  if (actual !== target) {
+  if (Math.abs(Number(actual - data.bufferTarget)) > data.minAmount) {
     log.warn(
       { event: 'buffer_imbalance' },
-      `Buffer total (${actual}) does not equal Buffer target (${target})`,
+      `Buffer total (${actual}) does not equal Buffer target (${data.bufferTarget})`,
     );
   }
 }

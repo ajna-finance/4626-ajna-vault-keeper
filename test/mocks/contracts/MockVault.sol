@@ -67,7 +67,7 @@ contract MockVault {
     }
 
     function lpToValue(uint256 _bucket) public view returns (uint256) {
-      return mockLpToValue[_bucket];
+      return qts[_bucket];
     }
 
     function setLpToValue(uint256 _bucket, uint256 _amount) public {

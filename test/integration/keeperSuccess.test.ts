@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { addToBuffer, setBufferRatio, setMockState, useMocks } from '../helpers/vaultHelpers';
 import { getPrice } from '../../src/oracle/price';
-import { getIndexToPrice, getQtValue } from '../../src/ajna/poolInfoUtils';
+import { getIndexToPrice } from '../../src/ajna/poolInfoUtils';
 import { _calculateBufferTarget, run } from '../../src/keeper';
 import { getBufferTotal } from '../../src/vault/buffer';
 import { client } from '../../src/utils/client';
+import { lpToValue } from '../../src/vault/vault';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 describe('keeper run success', () => {
@@ -49,18 +50,18 @@ describe('keeper run success', () => {
     // Twelve buckets expected for move, each with starting balance of 100000000000000000000n
     const expectedMoveAmount = 12n * 100000000000000000000n;
 
-    const optimalBucketBalanceBefore = await getQtValue(4157n);
-    const dustyBucketBefore = await getQtValue(4149n);
+    const optimalBucketBalanceBefore = await lpToValue(4157n);
+    const dustyBucketBefore = await lpToValue(4149n);
 
     await run();
 
-    const optimalBucketBalanceAfter = await getQtValue(4157n);
-    const dustyBucketAfter = await getQtValue(4149n);
+    const optimalBucketBalanceAfter = await lpToValue(4157n);
+    const dustyBucketAfter = await lpToValue(4149n);
 
     for (let i = 0; i < expectedMovedBuckets.length; i++) {
       const bucketPrice = await getIndexToPrice(expectedMovedBuckets[i]!);
       const bucketPriceExpectation = bucketPrice < htp || bucketPrice > currentPrice;
-      const balance = await getQtValue(expectedMovedBuckets[i]!);
+      const balance = await lpToValue(expectedMovedBuckets[i]!);
 
       expect(bucketPriceExpectation).toBe(true);
       expect(balance).toBe(0n);
@@ -68,7 +69,7 @@ describe('keeper run success', () => {
 
     for (let i = 0; i < expectedUnmovedBuckets.length; i++) {
       const bucketPrice = await getIndexToPrice(expectedUnmovedBuckets[i]!);
-      const balance = await getQtValue(expectedUnmovedBuckets[i]!);
+      const balance = await lpToValue(expectedUnmovedBuckets[i]!);
 
       expect(bucketPrice).toBeGreaterThan(htp);
       expect(bucketPrice).toBeLessThanOrEqual(currentPrice);
@@ -85,14 +86,14 @@ describe('keeper run success', () => {
   it('refills buffer before optimal bucket when necessary', async () => {
     await setBufferRatio(5000n);
     const bufferTotalBefore = await getBufferTotal();
-    const optimalBucketBalanceBefore = await getQtValue(4157n);
+    const optimalBucketBalanceBefore = await lpToValue(4157n);
     const expectedBufferBalance = await _calculateBufferTarget();
     const expectedMoveAmount = 12n * 100000000000000000000n;
 
     await run();
 
     const bufferTotalAfter = await getBufferTotal();
-    const optimalBucketBalanceAfter = await getQtValue(4157n);
+    const optimalBucketBalanceAfter = await lpToValue(4157n);
 
     expect(bufferTotalBefore).toBe(0n);
     expect(bufferTotalAfter).toBe(expectedBufferBalance);
@@ -109,12 +110,12 @@ describe('keeper run success', () => {
     await addToBuffer(2n * bufferTarget);
 
     const bufferTotalBefore = await getBufferTotal();
-    const optimalBucketBalanceBefore = await getQtValue(4157n);
+    const optimalBucketBalanceBefore = await lpToValue(4157n);
 
     await run();
 
     const bufferTotalAfter = await getBufferTotal();
-    const optimalBucketBalanceAfter = await getQtValue(4157n);
+    const optimalBucketBalanceAfter = await lpToValue(4157n);
 
     expect(bufferTotalBefore).toBe(2n * bufferTarget);
     expect(bufferTotalAfter).toBe(bufferTarget);

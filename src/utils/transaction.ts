@@ -44,7 +44,7 @@ export async function handleTransaction(
 
     if (context) {
       const action = context.action as string;
-      const amount = parseLogs(receipt, action);
+      const amount = getAmountMoved(receipt, action);
       assets = amount ?? (context.amount as bigint);
     }
 
@@ -68,7 +68,7 @@ export async function handleTransaction(
   };
 }
 
-function parseLogs(receipt: any, action: string) {
+function getAmountMoved(receipt: any, action: string) {
   const vaultAbi = getAbi('vault');
   let amount;
 

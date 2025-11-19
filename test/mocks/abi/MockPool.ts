@@ -40,4 +40,28 @@ export const mockPoolAbi = [
     outputs: [],
     stateMutability: 'nonpayable',
   },
+  {
+    type: 'function',
+    name: 'totalT0DebtInAuction',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'inflatorInfo',
+    inputs: [],
+    outputs: [
+      { name: '', type: 'uint256' },
+      { name: '', type: 'uint256' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'depositIndex',
+    inputs: [{ name: '', type: 'uint256' }],
+    outputs: [{ name: '', type: 'uint256' }],
+    stateMutability: 'view',
+  },
 ] as const;

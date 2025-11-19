@@ -18,7 +18,7 @@ import {
   drain,
   getDustThreshold,
 } from './vault/vault';
-import { getBankruptcyTime, getBucketLps, updateInterest } from './ajna/pool';
+import { getBankruptcyTime, getBucketLps, updateInterest, isBucketDebtLocked } from './ajna/pool';
 
 type KeeperRunData = {
   buckets: readonly bigint[];
@@ -53,6 +53,7 @@ export async function run() {
   if (!(await isOptimalBucketInRange(data))) return;
   if (await isOptimalBucketDusty(data)) return;
   if (await isOptimalBucketRecentlyBankrupt(data)) return;
+  if (await isBucketDebtLocked(data.optimalBucket)) return;
 
   await rebalanceBuckets(data);
   await rebalanceBuffer(data);

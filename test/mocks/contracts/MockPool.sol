@@ -23,4 +23,16 @@ contract MockPool {
     }
 
     function updateInterest() public {}
+
+    function totalT0DebtInAuction() public returns (uint256) {
+        return 0;
+    }
+
+    function inflatorInfo() public returns (uint256, uint256) {
+        return (0, 0);
+    }
+
+    function depositIndex(uint256 _index) public returns (uint256) {
+        return 0;
+    }
 }

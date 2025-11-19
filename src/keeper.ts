@@ -43,17 +43,20 @@ type MoveOperation = {
 };
 
 export async function run() {
-  if (await isPaused()) return;
-  if (await poolHasBadDebt()) return;
+  if (await isPaused()) return logRunExit('vault is currently paused');
+  if (await poolHasBadDebt()) return logRunExit('pool has bad debt');
 
   await updateInterest();
   const data = await _getKeeperData();
   await drain(data.optimalBucket);
 
-  if (!(await isOptimalBucketInRange(data))) return;
-  if (await isOptimalBucketDusty(data)) return;
-  if (await isOptimalBucketRecentlyBankrupt(data)) return;
-  if (await isBucketDebtLocked(data.optimalBucket)) return;
+  if (!(await isOptimalBucketInRange(data)))
+    return logRunExit('optimal bucket is not in interest-earning range');
+  if (await isOptimalBucketDusty(data)) return logRunExit('optimal bucket is dusty');
+  if (await isOptimalBucketRecentlyBankrupt(data))
+    return logRunExit('optimal bucket was recently bankrupt');
+  if (await isBucketDebtLocked(data.optimalBucket))
+    return logRunExit('optimal bucket debt is locked due to pending auction');
 
   await rebalanceBuckets(data);
   await rebalanceBuffer(data);
@@ -310,6 +313,10 @@ export async function _calculateBufferTarget(): Promise<bigint> {
 }
 
 // ============= Logging =============
+
+function logRunExit(reason: string) {
+  log.warn({ event: 'keeper_run_aborted', reason }, 'keeper run aborted');
+}
 
 async function logFinalState(data: KeeperRunData): Promise<void> {
   const finalBufferTotal = await getBufferTotal();

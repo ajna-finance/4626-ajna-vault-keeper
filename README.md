@@ -69,12 +69,14 @@ Due to LUP and HTP shifting dynamically with pool activity, the in-range boundar
     * `getPriceToIndex()` - converts a given price into the corresponding bucket index. The keeper uses this to translate the current pool price into an index before applying `OPTIMAL_BUCKET_DIFF`.
     * `getIndexToPrice()` - converts a given bucket index back into its price. The keeper uses this to verify or display the price level of the selected target bucket.
 
-2. Early Fail or Skip Conditions:
+2. <a name="exit-conditions"></a>Early Fail or Skip Conditions:
     * If `vault.paused()` is true - the keeper exits immediately with no state changes.
     * If `poolHasBadDebt()` is true - the pool has unresolved bad debt or active liquidations, the keeper exits immediately.
     * If the computed optimal bucket is out of range (below `vault.minBucketIndex()` or above `getHtp()`), the keeper exits early with no moves, leaving bucket balances unchanged.
     * If the computed move size is below the keeper's configured minimum threshold, the action is skipped to avoid dust transfers.
     * If the optimal bucket is dusty (≤ 1,000,000 WAD of value) then the keeper skips to avoid operating on very small bucket amounts.
+    * If the optimal bucket has been bankrupt more recently than the configured `MIN_TIME_SINCE_BANKRUPTCY`, the run is aborted to prevent risky deposits.
+    * If the optimal bucket's debt is locked due to an ongoing auction (i.e., withdrawals from the bucket would revert in Ajna with `RemoveDepositLockedByAuctionDebt()`), the run is aborted to prevent locking vault funds in the bucket.
 
 3. Compute Targets:
     * The keeper reads the current pool price (`getPrice()`), converts it to a bucket index (`getPriceToIndex(price)`), then applies an integer offset `OPTIMAL_BUCKET_DIFF` to produce `optimalBucket`, which `_getKeeperData()` stores for subsequent range checks.
@@ -109,6 +111,7 @@ Due to LUP and HTP shifting dynamically with pool activity, the in-range boundar
         * `tx_failed` - failed tx with phase (`send`, `fail`, `revert`), hash, receipt, and context.
       * Warnings:
         * `buffer_imbalance` - emitted when the Buffer total does not match the computed bufferTarget after rebalancing (indicating a residual surplus/deficit).
+        * `keeper_run_aborted` - emitted when the keeper run exits early for any of the reasons specified above in [Early Fail or Skip Conditions](#exit-conditions).
 
 ## Local Set Up
 

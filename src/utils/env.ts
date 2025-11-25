@@ -36,6 +36,13 @@ const minTimeSinceBankruptcy = process.env.MIN_TIME_SINCE_BANKRUPTCY ?? 259200;
 // Defaults to 72 hours (seconds)
 const maxAuctionAge = process.env.MAX_AUCTION_AGE ?? 259200;
 
+let exitOnSubgraphFailure;
+if (process.env.EXIT_ON_SUBGRAPH_FAILURE) {
+  exitOnSubgraphFailure = process.env.EXIT_ON_SUBGRAPH_FAILURE === 'true' ? true : false;
+} else {
+  exitOnSubgraphFailure = false;
+}
+
 export const env = {
   KEEPER_INTERVAL_MS: Number(process.env.KEEPER_INTERVAL_MS),
   VAULT_ADDRESS: process.env.VAULT_ADDRESS,
@@ -58,4 +65,5 @@ export const env = {
   SUBGRAPH_URL: process.env.SUBGRAPH_URL,
   MIN_TIME_SINCE_BANKRUPTCY: BigInt(minTimeSinceBankruptcy),
   MAX_AUCTION_AGE: Number(maxAuctionAge),
+  EXIT_ON_SUBGRAPH_FAILURE: exitOnSubgraphFailure,
 };

@@ -8,11 +8,11 @@ export const getAssetDecimals = () => vault().read.assetDecimals();
 
 export const getTotalAssets = () => vault().read.totalAssets();
 
-export const getPoolInfoUtilsAddress = () => vault().read.INFO();
+export const getPoolInfoUtilsAddress = () => vault().read.info();
 
-export const getBufferAddress = () => vault().read.BUFFER();
+export const getBufferAddress = () => vault().read.buffer();
 
-export const getPoolAddress = () => vault().read.POOL();
+export const getPoolAddress = () => vault().read.pool();
 
 export const isPaused = () => vault().read.paused();
 

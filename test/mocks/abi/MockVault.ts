@@ -20,6 +20,27 @@ export const mockVaultAbi = [
   },
   {
     type: 'function',
+    name: 'pool',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'buffer',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'info',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     name: 'INFO',
     inputs: [],
     outputs: [{ name: '', type: 'address' }],

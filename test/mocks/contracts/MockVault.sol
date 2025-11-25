@@ -27,6 +27,18 @@ contract MockVault {
         assetDecimals = 18;
     }
 
+    function pool() public view returns (address) {
+        return address(POOL);
+    }
+
+    function buffer() public view returns (address) {
+        return address(BUFFER);
+    }
+
+    function info() public view returns (address) {
+        return address(INFO);
+    }
+
     function move(uint256 _fromBucket, uint256 _toBucket, uint256 _amount) public {
         _removeFromBucket(_amount, _fromBucket);
         _addToBucket(_amount, _toBucket);

@@ -1,11 +1,11 @@
 import { env } from './utils/env';
 import { log } from './utils/logger';
 import { toWad } from './utils/decimalConversion';
-import { handleTransaction } from './utils/transaction';
+import { handleTransaction, type TransactionData } from './utils/transaction';
 import { getPrice } from './oracle/price';
 import { poolHasBadDebt } from './subgraph/poolHealth';
 import { getBufferTotal } from './vault/buffer';
-import { getHtp, getIndexToPrice, getLup, getPriceToIndex, getQtValue } from './ajna/poolInfoUtils';
+import { getHtp, getIndexToPrice, getLup, getPriceToIndex } from './ajna/poolInfoUtils';
 import { getBufferRatio, getMinBucketIndex } from './vault/vaultAuth';
 import {
   getAssetDecimals,
@@ -17,6 +17,7 @@ import {
   moveToBuffer,
   drain,
   getDustThreshold,
+  lpToValue,
 } from './vault/vault';
 import { getBankruptcyTime, getBucketLps, updateInterest, isBucketDebtLocked } from './ajna/pool';
 
@@ -28,6 +29,7 @@ type KeeperRunData = {
   htp: BucketPrice;
   price: bigint;
   optimalBucket: bigint;
+  minAmount: bigint;
 };
 
 type BucketPrice = {
@@ -74,17 +76,20 @@ async function rebalanceBuckets(data: KeeperRunData): Promise<void> {
 
     if (await shouldSkipBucket(bucket, data)) continue;
 
-    const bucketValue = await getQtValue(bucket);
+    const bucketValue = await lpToValue(bucket);
     const operations = planBucketOperations(bucket, bucketValue, bufferNeeded, data, i);
+    let results = [];
 
     for (const op of operations) {
-      await executeMoveOperation(op);
+      const txData = await executeMoveOperation(op);
+      results.push(txData);
     }
 
-    bufferNeeded = operations.reduce(
-      (needed, op) => (op.to === 'Buffer' ? needed - op.amount : needed),
-      bufferNeeded,
-    );
+    bufferNeeded = operations.reduce((needed, op, i) => {
+      const tx = results[i];
+      if (!tx || !tx.status) return needed;
+      return op.to === 'Buffer' ? needed - tx.assets : needed;
+    }, bufferNeeded);
   }
 }
 
@@ -92,7 +97,7 @@ async function rebalanceBuffer(data: KeeperRunData): Promise<void> {
   const newBufferTotal = await getBufferTotal();
   const difference = newBufferTotal - data.bufferTarget;
 
-  if (difference === 0n) return;
+  if (Math.abs(Number(difference)) < data.minAmount) return;
 
   if (difference > 0n) {
     await moveExcessFromBuffer(difference, data.optimalBucket);
@@ -100,7 +105,7 @@ async function rebalanceBuffer(data: KeeperRunData): Promise<void> {
     await fillBufferDeficit(-difference, data);
   }
 
-  await verifyBufferTarget(data.bufferTarget);
+  await verifyBufferTarget(data);
 }
 
 // ============= Operation Planning =============
@@ -114,7 +119,7 @@ function planBucketOperations(
 ): MoveOperation[] {
   const operations: MoveOperation[] = [];
 
-  if (bufferNeeded === 0n) {
+  if (bufferNeeded < data.minAmount) {
     operations.push({
       from: bucket,
       to: data.optimalBucket,
@@ -148,22 +153,22 @@ function planBucketOperations(
 
 // ============= Move Execution =============
 
-async function executeMoveOperation(op: MoveOperation): Promise<void> {
+async function executeMoveOperation(op: MoveOperation): Promise<TransactionData> {
   if (op.from === 'Buffer') {
-    await handleTransaction(moveFromBuffer(op.to as bigint, op.amount), {
-      action: 'moveFromBuffer',
+    return await handleTransaction(moveFromBuffer(op.to as bigint, op.amount), {
+      action: 'MoveFromBuffer',
       to: op.to,
       amount: op.amount,
     });
   } else if (op.to === 'Buffer') {
-    await handleTransaction(moveToBuffer(op.from, op.amount), {
-      action: 'moveToBuffer',
+    return await handleTransaction(moveToBuffer(op.from, op.amount), {
+      action: 'MoveToBuffer',
       from: op.from,
       amount: op.amount,
     });
   } else {
-    await handleTransaction(move(op.from, op.to, op.amount), {
-      action: 'move',
+    return await handleTransaction(move(op.from, op.to, op.amount), {
+      action: 'Move',
       from: op.from,
       to: op.to,
       amount: op.amount,
@@ -174,7 +179,7 @@ async function executeMoveOperation(op: MoveOperation): Promise<void> {
 async function moveExcessFromBuffer(amount: bigint, targetBucket: bigint): Promise<void> {
   await drain(targetBucket);
   await handleTransaction(moveFromBuffer(targetBucket, amount), {
-    action: 'moveFromBuffer',
+    action: 'MoveFromBuffer',
     to: targetBucket,
     amount: amount,
   });
@@ -183,22 +188,22 @@ async function moveExcessFromBuffer(amount: bigint, targetBucket: bigint): Promi
 async function fillBufferDeficit(needed: bigint, data: KeeperRunData): Promise<void> {
   let remaining = needed;
 
-  for (let i = 0; i < data.buckets.length && remaining > 0n; i++) {
+  for (let i = 0; i < data.buckets.length && remaining > data.minAmount; i++) {
     const bucket = data.buckets[i]!;
     await drain(bucket);
-    const bucketValue = await getQtValue(bucket);
+    const bucketValue = await lpToValue(bucket);
 
-    if (bucketValue === 0n) continue;
+    if (bucketValue < data.minAmount) continue;
 
     const amountToMove = bucketValue >= remaining ? remaining : bucketValue;
 
-    await handleTransaction(moveToBuffer(bucket, amountToMove), {
-      action: 'moveToBuffer',
+    const txData = await handleTransaction(moveToBuffer(bucket, amountToMove), {
+      action: 'MoveToBuffer',
       from: bucket,
       amount: amountToMove,
     });
 
-    remaining -= amountToMove;
+    if (txData.status) remaining -= txData.assets;
   }
 }
 
@@ -207,7 +212,7 @@ async function fillBufferDeficit(needed: bigint, data: KeeperRunData): Promise<v
 async function shouldSkipBucket(bucket: bigint, data: KeeperRunData): Promise<boolean> {
   if (bucket === data.optimalBucket) return true;
 
-  const bucketValue = await getQtValue(bucket);
+  const bucketValue = await lpToValue(bucket);
   if (bucketValue < env.MIN_MOVE_AMOUNT) return true;
 
   const bucketPrice = await getIndexToPrice(bucket);
@@ -258,12 +263,12 @@ function calculateBufferDeficit(data: KeeperRunData): bigint {
   return data.bufferTarget > data.bufferTotal ? data.bufferTarget - data.bufferTotal : 0n;
 }
 
-async function verifyBufferTarget(target: bigint): Promise<void> {
+async function verifyBufferTarget(data: KeeperRunData): Promise<void> {
   const actual = await getBufferTotal();
-  if (actual !== target) {
+  if (Math.abs(Number(actual - data.bufferTarget)) > data.minAmount) {
     log.warn(
       { event: 'buffer_imbalance' },
-      `Buffer total (${actual}) does not equal Buffer target (${target})`,
+      `Buffer total (${actual}) does not equal Buffer target (${data.bufferTarget})`,
     );
   }
 }
@@ -271,19 +276,24 @@ async function verifyBufferTarget(target: bigint): Promise<void> {
 // ============= Data Fetching =============
 
 export async function _getKeeperData(): Promise<KeeperRunData> {
-  const [buckets, bufferTotal, lup, htp, price, bufferTarget] = await Promise.all([
+  const [initialBuckets, bufferTotal, lup, htp, price] = await Promise.all([
     getBuckets(),
     getBufferTotal(),
     getLup(),
     getHtp(),
     getPrice(),
-    _calculateBufferTarget(),
   ]);
 
-  const [lupIndex, htpIndex, optimalBucket] = await Promise.all([
+  for (let i = 0; i < initialBuckets.length; i++) {
+    await drain(initialBuckets[i]);
+  }
+
+  const [lupIndex, htpIndex, optimalBucket, buckets, bufferTarget] = await Promise.all([
     getPriceToIndex(lup),
     getPriceToIndex(htp),
     _calculateOptimalBucket(price),
+    getBuckets(),
+    _calculateBufferTarget(),
   ]);
 
   return {
@@ -294,6 +304,7 @@ export async function _getKeeperData(): Promise<KeeperRunData> {
     htp: { price: htp, index: htpIndex },
     price: BigInt(price),
     optimalBucket,
+    minAmount: env.MIN_MOVE_AMOUNT,
   };
 }
 

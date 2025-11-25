@@ -72,6 +72,17 @@ export const vaultAbi = [
   },
   {
     type: 'event',
+    name: 'Drain',
+    inputs: [
+      { name: 'caller', type: 'address', indexed: true },
+      { name: 'bucket', type: 'uint256', indexed: false },
+      { name: 'oldLps', type: 'uint256', indexed: false },
+      { name: 'newLps', type: 'uint256', indexed: false },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
     name: 'SetAdmin',
     inputs: [
       { name: 'oldAdmin', type: 'address', indexed: true },

@@ -43,10 +43,11 @@ Due to LUP and HTP shifting dynamically with pool activity, the in-range boundar
 | `MIN_MOVE_AMOUNT`              | Skip moves if bucket's quote token balance is below this amount (dust limit) - enforced by vault.    | Integer (WAD units)      | Optional                                       | 1,000,000        |
 | `MIN_TIME_SINCE_BANKRUPTCY`    | Minimum time since bucket bankruptcy to be considered valid. Abort keeper run if timestamp is between this value and current time.                     | Integer (seconds)        | Optional                                       | 259,200  (72h)    |
 | `MAX_AUCTION_AGE`              | Only consider auctions with bad debt if they are older than this value.                                    | Integer (seconds)        | Optional                                       | 259,200  (72h)    |
+| `EXIT_ON_SUBGRAPH_FAILURE` | Abort run if the subgraph query fails during the check for bad debt in the pool. | String (`true`/`false`) | Optional | `false`
 | `ORACLE_API_KEY`               | CoinGecko API key.                                                               | String                   | Optional                                       | None             |
 | `ORACLE_KEY_TIER`              | CoinGecko tier (`demo`, `pro`).                                                  | String                   | Conditional (if `ORACLE_API_KEY` set)          | None             |
 | `ONCHAIN_ORACLE_ADDRESS`       | Address of Chronicle on-chain oracle.                                            | Ethereum address (`0x…`) | Conditional (if `ONCHAIN_ORACLE_PRIMARY=true`) | None             |
-| `ONCHAIN_ORACLE_PRIMARY`       | Use on-chain oracle as primary instead of CoinGecko.                             | Boolean (`true/false`)   | Optional                                       | false            |
+| `ONCHAIN_ORACLE_PRIMARY`       | Use on-chain oracle as primary instead of CoinGecko.                             | String (`true`/`false`)   | Optional                                       | false            |
 | `ONCHAIN_ORACLE_MAX_STALENESS` | Max allowed age of on-chain price data.                                          | Integer (seconds)        | Conditional (if `ONCHAIN_ORACLE_PRIMARY=true`) | 43,200 (12h)     |
 
 
@@ -82,18 +83,18 @@ Due to LUP and HTP shifting dynamically with pool activity, the in-range boundar
     * The keeper reads the current pool price (`getPrice()`), converts it to a bucket index (`getPriceToIndex(price)`), then applies an integer offset `OPTIMAL_BUCKET_DIFF` to produce `optimalBucket`, which `_getKeeperData()` stores for subsequent range checks.
     * Concurrent internal index calculations - `_getKeeperData()` computes `lupIndex`, `htpIndex`, and `optimalBucket` using `Promise.all`, and binds the third value to `optimalBucket`.
     * Buffer target (computed here) & gap (computed later) - `_getKeeperData()` computes `bufferTarget` via `_calculateBufferTarget()`, which multiplies total assets (scaled to WAD using asset decimals) by the configured `bufferRatio` and divides by 10,000 (basis points). It also reads `bufferTotal` with `getBufferTotal()`. The actual deficit/surplus ("gap") is only derived during rebalancing (e.g. `calculateBufferDeficit(data)`), so it is not stored in `_getKeeperData()`.
-    * Per-bucket sizing - The keeper sizes per bucket moves by using `getQtValue(bucket)` which provides the quote value used to size moves, whereas `getLpToValue(optimalBucket)` is only used to detect dusty optimal and skip.
+    * Per-bucket sizing - The keeper sizes per bucket moves by using `lpToValue(bucket)` which provides the quote value used to size moves, whereas `getLpToValue(optimalBucket)` is only used to detect dusty optimal and skip.
     * KeeperRunData payload - `_getKeeperData()` returns `{ buckets, bufferTotal, bufferTarget, price, lup, htp, lupIndex, htpIndex, optimalBucket }`.
     * The keeper then validates `optimalBucket` with `isOptimalBucketInRange(data)`; this uses `getIndexToPrice`, `getLup`, `getHtp`, and `getMinBucketIndex()`, where `buckets` is the per-bucket snapshot the sizing loop iterates over.
 
 4. Execute Rebalancing:
-    * If the Buffer is in deficit and below target, the keeper withdraws from out-of-range buckets into the Buffer until the deficit is closed. For each candidate bucket, if `bucket === optimalBucket` or `getQtValue(bucket) < MIN_MOVE_AMOUNT`or `isBucketInRange(bucket, data) === true`, it skips; otherwise it calls `vault.moveToBuffer(from=bucket, amount=min(getQtValue(bucket), remainingDeficit))`.
-    * If the Buffer is not in deficit (i.e. at target), the keeper consolidates out-of-range buckets. For each bucket where `!isBucketInRange(...)`, if it is not the `optimalBucket` and `getQtValue(bucket) ≥ MIN_MOVE_AMOUNT`, call `vault.move(from=bucket, to=optimalBucket, amount=getQtValue(bucket))`, otherwise skip.
+    * If the Buffer is in deficit and below target, the keeper withdraws from out-of-range buckets into the Buffer until the deficit is closed. For each candidate bucket, if `bucket === optimalBucket` or `lpToValue(bucket) < MIN_MOVE_AMOUNT`or `isBucketInRange(bucket, data) === true`, it skips; otherwise it calls `vault.moveToBuffer(from=bucket, amount=min(lpToValue(bucket), remainingDeficit))`.
+    * If the Buffer is not in deficit (i.e. at target), the keeper consolidates out-of-range buckets. For each bucket where `!isBucketInRange(...)`, if it is not the `optimalBucket` and `lpToValue(bucket) ≥ MIN_MOVE_AMOUNT`, call `vault.move(from=bucket, to=optimalBucket, amount=lpToValue(bucket))`, otherwise skip.
     * After covering deficits or consolidating, the keeper re-checks Buffer vs. target:
       * If there is a surplus in the Buffer, the keeper transfers the excess from the Buffer into the optimal bucket via `vault.moveFromBuffer(to=optimalBucket, amount=bufferTotal - bufferTarget)`.
       * If the buffer is still in deficit, the keeper continues pulling liquidity from out-of-range buckets into the Buffer with `vault.moveToBuffer(...)` until the gap is closed or no suitable buckets remain.
     * Guards per move (reads before each tx)
-      * `shouldSkipBucket(bucket, data)` - returns `true` if the bucket is the `optimalBucket`, if `getQtValue(bucket) < MIN_MOVE_AMOUNT` (dust), or if `isBucketInRange(bucket, data)` is `true`. Otherwise, the bucket is a candidate for moves.
+      * `shouldSkipBucket(bucket, data)` - returns `true` if the bucket is the `optimalBucket`, if `lpToValue(bucket) < MIN_MOVE_AMOUNT` (dust), or if `isBucketInRange(bucket, data)` is `true`. Otherwise, the bucket is a candidate for moves.
       * `isBucketInRange(bucketPrice, data)` - returns `true` if the bucket's price lies within `[max(LUP, priceAt(minBucketIndex)), min(currentPrice, HTP)]`. Buckets outside this range are considered out-of-range and eligible for rebalancing.
 
 5. Housekeeping & Telemetry:
@@ -101,8 +102,8 @@ Due to LUP and HTP shifting dynamically with pool activity, the in-range boundar
       * `Move(fromBucket, toBucket, amount)` - vault function and event that shifts liquidity directly between buckets. The keeper uses it when consolidating out-of-range buckets into the `optimalBucket` without touching the Buffer.
       * `MoveFromBuffer(toBucket, amount)` - vault function and event that moves liquidity out of the Buffer into a bucket. The keeper calls this to drain Buffer surplus or to place funds into the `optimalBucket`.
       * `MoveToBuffer(fromBucket, amount)` - vault function and event that withdraws liquidity from a bucket into the Buffer; the keeper uses it to top up the Buffer or cover a deficit.
-    * Off-chain logs (via keeper `log` and `handleTransaction`)
-      * Run-level:
+    * Off-chain logs (pino-formatted JSON; filterable by event field)
+      * Logger events:
         * `keeper_run_succeeded` - final state with buffer total, buffer target, current price, and optimal bucket.
         * `keeper_run_failed` - run aborted with error details.
         * `keeper_stopping` - process shutdown (SIGINT/SIGTERM).
@@ -112,6 +113,11 @@ Due to LUP and HTP shifting dynamically with pool activity, the in-range boundar
       * Warnings:
         * `buffer_imbalance` - emitted when the Buffer total does not match the computed bufferTarget after rebalancing (indicating a residual surplus/deficit).
         * `keeper_run_aborted` - emitted when the keeper run exits early for any of the reasons specified above in [Early Fail or Skip Conditions](#exit-conditions).
+        * `price_query_failed` - query failed for the first of the two configured price feeds.
+      * Other errors:
+        * `subgraph_query_failed` - query for open auctions via configured subgraph threw an error.
+        * `uncaught_exception` - an unhandled error crashed the keeper process.
+        * `unhandled_rejection` - an unhandled promise rejection crashed the keeper process.
 
 ## Local Set Up
 

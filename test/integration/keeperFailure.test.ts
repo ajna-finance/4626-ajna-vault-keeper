@@ -13,8 +13,7 @@ import {
   setPaused,
   useMocks,
 } from '../helpers/vaultHelpers';
-import { getBuckets } from '../../src/vault/vault';
-import { getQtValue } from '../../src/ajna/poolInfoUtils';
+import { getBuckets, lpToValue } from '../../src/vault/vault';
 import { run } from '../../src/keeper';
 import { client } from '../../src/utils/client';
 import { env } from '../../src/utils/env';
@@ -48,7 +47,7 @@ describe('keeper run failure', () => {
 
     const buckets = await getBuckets();
     for (let i = 0; i < buckets.length - 2; i++) {
-      const balance = await getQtValue(buckets[i]);
+      const balance = await lpToValue(buckets[i]);
       expect(balance).toBe(100000000000000000000n);
     }
 
@@ -61,7 +60,7 @@ describe('keeper run failure', () => {
 
     const buckets = await getBuckets();
     for (let i = 0; i < buckets.length - 2; i++) {
-      const balance = await getQtValue(buckets[i]);
+      const balance = await lpToValue(buckets[i]);
       expect(balance).toBe(100000000000000000000n);
     }
 
@@ -74,7 +73,7 @@ describe('keeper run failure', () => {
 
     const buckets = await getBuckets();
     for (let i = 0; i < buckets.length - 2; i++) {
-      const balance = await getQtValue(buckets[i]);
+      const balance = await lpToValue(buckets[i]);
       expect(balance).toBe(100000000000000000000n);
     }
   });
@@ -92,7 +91,7 @@ describe('keeper run failure', () => {
 
     const buckets = await getBuckets();
     for (let i = 0; i < buckets.length - 2; i++) {
-      const balance = await getQtValue(buckets[i]);
+      const balance = await lpToValue(buckets[i]);
       expect(balance).toBe(100000000000000000000n);
     }
   });
@@ -105,7 +104,7 @@ describe('keeper run failure', () => {
 
     const buckets = await getBuckets();
     for (let i = 0; i < buckets.length - 2; i++) {
-      const balance = await getQtValue(buckets[i]);
+      const balance = await lpToValue(buckets[i]);
       expect(balance).toBe(100000000000000000000n);
     }
   });

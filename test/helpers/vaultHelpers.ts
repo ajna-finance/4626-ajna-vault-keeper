@@ -1,7 +1,6 @@
 import { contract } from '../../src/utils/contract.ts';
 import type { Address } from 'viem';
 
-const buffer = contract('buffer');
 const vaultAuth = contract('vaultAuth');
 const chronicle = contract('chronicle');
 const poolInfoUtils = contract('poolInfoUtils');
@@ -10,8 +9,6 @@ const pool = contract('pool');
 
 export const setBufferRatio = (ratio: bigint) => vaultAuth().write.setBufferRatio([ratio]);
 export const setMinBucketIndex = (index: bigint) => vaultAuth().write.setMinBucketIndex([index]);
-
-export const addToBuffer = (amount: bigint) => buffer().write.addToBuffer(amount);
 
 export const setPaused = (status: boolean) => vault().write.setPaused(status);
 

@@ -11,9 +11,10 @@ import {
   getPoolAddress,
   drain,
   getDustThreshold,
+  lpToValue,
 } from '../../src/vault/vault';
 import { getBufferTotal } from '../../src/vault/buffer';
-import { getHtp, getPriceToIndex, getQtValue } from '../../src/ajna/poolInfoUtils';
+import { getHtp, getPriceToIndex } from '../../src/ajna/poolInfoUtils';
 import { handleTransaction } from '../../src/utils/transaction';
 import { client } from '../../src/utils/client.ts';
 import { setBufferRatio } from '../helpers/vaultHelpers.ts';
@@ -76,7 +77,7 @@ if (!process.env.CI) {
 
       [initialBufferBalance, initialHtpQts] = await Promise.all([
         getBufferTotal(),
-        getQtValue(htpIndex),
+        lpToValue(htpIndex),
       ]);
 
       await handleTransaction(moveFromBuffer(htpIndex, assets), {
@@ -102,8 +103,8 @@ if (!process.env.CI) {
       const toIndex = htpIndex - 1n;
 
       const [beforeHtpQts, beforeToQts] = await Promise.all([
-        getQtValue(htpIndex),
-        getQtValue(toIndex),
+        lpToValue(htpIndex),
+        lpToValue(toIndex),
       ]);
 
       const toAssets = 19999721737n;
@@ -115,8 +116,8 @@ if (!process.env.CI) {
       });
 
       const [afterHtpQts, afterToQts] = await Promise.all([
-        getQtValue(htpIndex),
-        getQtValue(toIndex),
+        lpToValue(htpIndex),
+        lpToValue(toIndex),
       ]);
 
       const htpDelta = beforeHtpQts - afterHtpQts;
@@ -132,7 +133,7 @@ if (!process.env.CI) {
 
       const [beforeBufferBalance, beforeHtpQts] = await Promise.all([
         getBufferTotal(),
-        getQtValue(htpIndex),
+        lpToValue(htpIndex),
       ]);
 
       const toAssets = BigInt(1e10);
@@ -144,7 +145,7 @@ if (!process.env.CI) {
 
       const [afterBufferBalance, afterHtpQts] = await Promise.all([
         getBufferTotal() as bigint,
-        getQtValue(htpIndex),
+        lpToValue(htpIndex),
       ]);
 
       const bufferDelta: bigint = afterBufferBalance - beforeBufferBalance;
@@ -158,7 +159,7 @@ if (!process.env.CI) {
     it('can move from buffer to bucket', async () => {
       const [afterBufferBalance, afterHtpQts] = await Promise.all([
         getBufferTotal(),
-        getQtValue(htpIndex),
+        lpToValue(htpIndex),
       ]);
 
       const htpDelta = afterHtpQts - initialHtpQts;

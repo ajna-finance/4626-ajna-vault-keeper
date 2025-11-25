@@ -49,6 +49,7 @@ Due to LUP and HTP shifting dynamically with pool activity, the in-range boundar
 | `ONCHAIN_ORACLE_ADDRESS`       | Address of Chronicle on-chain oracle.                                            | Ethereum address (`0x…`) | Conditional (if `ONCHAIN_ORACLE_PRIMARY=true`) | None             |
 | `ONCHAIN_ORACLE_PRIMARY`       | Use on-chain oracle as primary instead of CoinGecko.                             | String (`true`/`false`)   | Optional                                       | false            |
 | `ONCHAIN_ORACLE_MAX_STALENESS` | Max allowed age of on-chain price data.                                          | Integer (seconds)        | Conditional (if `ONCHAIN_ORACLE_PRIMARY=true`) | 43,200 (12h)     |
+| `FUTURE_SKEW_TOLERANCE` | Max clock drift allowed from Chronicle timestamps. | Integer (seconds) |Optional | 120 (2 minutes) |
 
 
 2. Fetching State:

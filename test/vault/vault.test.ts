@@ -81,9 +81,9 @@ if (!process.env.CI) {
       ]);
 
       await handleTransaction(moveFromBuffer(htpIndex, assets), {
-        event: 'moveFromBuffer',
+        action: 'MoveFromBuffer',
         to: htpIndex,
-        assets,
+        amount: assets,
       });
 
       snapshot = await client.request({ method: 'evm_snapshot' as any, params: [] as any });
@@ -109,10 +109,10 @@ if (!process.env.CI) {
 
       const toAssets = 19999721737n;
       await handleTransaction(move(htpIndex, toIndex, toAssets), {
-        event: 'move',
+        action: 'Move',
         from: htpIndex,
         to: toIndex,
-        assets: toAssets,
+        amount: toAssets,
       });
 
       const [afterHtpQts, afterToQts] = await Promise.all([
@@ -138,9 +138,9 @@ if (!process.env.CI) {
 
       const toAssets = BigInt(1e10);
       await handleTransaction(moveToBuffer(htpIndex, toAssets), {
-        action: 'moveToBuffer',
+        action: 'MoveToBuffer',
         from: htpIndex,
-        assets: toAssets,
+        amount: toAssets,
       });
 
       const [afterBufferBalance, afterHtpQts] = await Promise.all([

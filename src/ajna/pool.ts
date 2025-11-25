@@ -15,3 +15,25 @@ export const getBucketLps = async (index: bigint) => {
 };
 
 export const updateInterest = () => pool().write.updateInterest();
+
+export const getTotalT0DebtInAuction = () => pool().read.totalT0DebtInAuction();
+
+export const getInflatorInfo = () => pool().read.inflatorInfo();
+
+export const getDepositIndex = (debt: bigint) => pool().read.depositIndex(debt);
+
+export const isBucketDebtLocked = async (index: bigint): Promise<boolean> => {
+  const t0DebtInAuction = (await getTotalT0DebtInAuction()) as bigint;
+  let debtLocked = false;
+
+  if (t0DebtInAuction !== 0n) {
+    const inflatorInfo = await getInflatorInfo();
+    const wad = 10n ** 18n;
+    const debt = (t0DebtInAuction * inflatorInfo[0] + wad / 2n) / wad;
+    const indexOfSum = await getDepositIndex(debt);
+
+    if (index <= indexOfSum) debtLocked = true;
+  }
+
+  return debtLocked;
+};

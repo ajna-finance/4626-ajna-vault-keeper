@@ -5,7 +5,7 @@ import { handleTransaction } from './utils/transaction';
 import { getPrice } from './oracle/price';
 import { poolHasBadDebt } from './subgraph/poolHealth';
 import { getBufferTotal } from './vault/buffer';
-import { getHtp, getIndexToPrice, getLup, getPriceToIndex, getQtValue } from './ajna/poolInfoUtils';
+import { getHtp, getIndexToPrice, getLup, getPriceToIndex } from './ajna/poolInfoUtils';
 import { getBufferRatio, getMinBucketIndex } from './vault/vaultAuth';
 import {
   getAssetDecimals,
@@ -17,6 +17,7 @@ import {
   moveToBuffer,
   drain,
   getDustThreshold,
+  lpToValue,
 } from './vault/vault';
 import { getBankruptcyTime, getBucketLps, updateInterest } from './ajna/pool';
 
@@ -70,7 +71,7 @@ async function rebalanceBuckets(data: KeeperRunData): Promise<void> {
 
     if (await shouldSkipBucket(bucket, data)) continue;
 
-    const bucketValue = await getQtValue(bucket);
+    const bucketValue = await lpToValue(bucket);
     const operations = planBucketOperations(bucket, bucketValue, bufferNeeded, data, i);
 
     for (const op of operations) {
@@ -182,7 +183,7 @@ async function fillBufferDeficit(needed: bigint, data: KeeperRunData): Promise<v
   for (let i = 0; i < data.buckets.length && remaining > 0n; i++) {
     const bucket = data.buckets[i]!;
     await drain(bucket);
-    const bucketValue = await getQtValue(bucket);
+    const bucketValue = await lpToValue(bucket);
 
     if (bucketValue === 0n) continue;
 
@@ -203,7 +204,7 @@ async function fillBufferDeficit(needed: bigint, data: KeeperRunData): Promise<v
 async function shouldSkipBucket(bucket: bigint, data: KeeperRunData): Promise<boolean> {
   if (bucket === data.optimalBucket) return true;
 
-  const bucketValue = await getQtValue(bucket);
+  const bucketValue = await lpToValue(bucket);
   if (bucketValue < env.MIN_MOVE_AMOUNT) return true;
 
   const bucketPrice = await getIndexToPrice(bucket);

@@ -17,6 +17,7 @@ contract MockVault {
     mapping (uint256 => uint256) public priceToIndex;
     mapping (uint256 => uint256) public qts; // index to qt value
     mapping (uint256 => uint256) public mockLpToValue; // fake mapping to test dusty buckets
+    mapping (uint256 => uint256) public lps;
 
     constructor(address _pool) {
         INFO = new MockPoolInfoUtils(address(this));
@@ -66,7 +67,7 @@ contract MockVault {
     }
 
     function lpToValue(uint256 _bucket) public view returns (uint256) {
-      return mockLpToValue[_bucket];
+      return qts[_bucket];
     }
 
     function setLpToValue(uint256 _bucket, uint256 _amount) public {

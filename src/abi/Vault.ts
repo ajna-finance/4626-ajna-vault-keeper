@@ -29,12 +29,31 @@ export const vaultAbi = [
       { name: 'bucket', type: 'uint256' },
     ],
   },
-  { type: 'error', name: 'FundsNotAvailable', inputs: [] },
   { type: 'error', name: 'ZeroAddress', inputs: [] },
   { type: 'error', name: 'NotAuthorized', inputs: [] },
   { type: 'error', name: 'VaultUnpaused', inputs: [] },
   { type: 'error', name: 'VaultPaused', inputs: [] },
   { type: 'error', name: 'RemovedCollateralValueNotZero', inputs: [] },
+  { type: 'error', name: 'DepositCapExceeded', inputs: [] },
+  { type: 'error', name: 'BufferRatioExceeded', inputs: [] },
+  {
+    type: 'error',
+    name: 'BucketLPDangerous',
+    inputs: [
+      { name: 'pool', type: 'address' },
+      { name: 'bucket', type: 'uint256' },
+      { name: 'bucketLP', type: 'uint256' },
+    ],
+  },
+  {
+    type: 'error',
+    name: 'BucketIndexTooLow',
+    inputs: [
+      { name: 'pool', type: 'address' },
+      { name: 'bucket', type: 'uint256' },
+      { name: 'minBucketIndex', type: 'uint256' },
+    ],
+  },
 
   {
     type: 'event',
@@ -76,17 +95,8 @@ export const vaultAbi = [
     inputs: [
       { name: 'caller', type: 'address', indexed: true },
       { name: 'bucket', type: 'uint256', indexed: false },
-      { name: 'oldLps', type: 'uint256', indexed: false },
+      { name: 'lps', type: 'uint256', indexed: false },
       { name: 'newLps', type: 'uint256', indexed: false },
-    ],
-    anonymous: false,
-  },
-  {
-    type: 'event',
-    name: 'SetAdmin',
-    inputs: [
-      { name: 'oldAdmin', type: 'address', indexed: true },
-      { name: 'newAdmin', type: 'address', indexed: true },
     ],
     anonymous: false,
   },
@@ -96,7 +106,7 @@ export const vaultAbi = [
     inputs: [
       { name: 'caller', type: 'address', indexed: true },
       { name: 'bucket', type: 'uint256', indexed: false },
-      { name: 'amount', type: 'uint256', indexed: false },
+      { name: 'gems', type: 'uint256', indexed: false },
       { name: 'lps', type: 'uint256', indexed: false },
       { name: 'value', type: 'uint256', indexed: false },
     ],
@@ -113,18 +123,8 @@ export const vaultAbi = [
     ],
     anonymous: false,
   },
-  {
-    type: 'event',
-    name: 'SetSwapper',
-    inputs: [
-      { name: 'oldSwapper', type: 'address', indexed: true },
-      { name: 'newSwapper', type: 'address', indexed: true },
-    ],
-    anonymous: false,
-  },
   { type: 'event', name: 'Paused', inputs: [], anonymous: false },
   { type: 'event', name: 'Unpaused', inputs: [], anonymous: false },
-
   {
     type: 'event',
     name: 'Transfer',
@@ -342,74 +342,10 @@ export const vaultAbi = [
   },
   {
     type: 'function',
-    name: 'bowls',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ name: '_sum', type: 'uint256' }],
-  },
-  {
-    type: 'function',
-    name: 'pail',
-    stateMutability: 'view',
-    inputs: [{ name: '_bucket', type: 'uint256' }],
-    outputs: [{ name: '', type: 'uint256' }],
-  },
-  {
-    type: 'function',
     name: 'lpToValue',
     stateMutability: 'view',
     inputs: [{ name: '_bucket', type: 'uint256' }],
     outputs: [{ name: '', type: 'uint256' }],
-  },
-  {
-    type: 'function',
-    name: 'separateBowls',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [
-      { name: '_quoteTokenValue', type: 'uint256' },
-      { name: '_collateralValue', type: 'uint256' },
-    ],
-  },
-  {
-    type: 'function',
-    name: 'lpToValuesSeparately',
-    stateMutability: 'view',
-    inputs: [{ name: '_bucket', type: 'uint256' }],
-    outputs: [
-      { name: '_quoteTokenValue', type: 'uint256' },
-      { name: '_collateralValue', type: 'uint256' },
-      { name: '_price', type: 'uint256' },
-      { name: '_vaultLPs', type: 'uint256' },
-    ],
-  },
-  {
-    type: 'function',
-    name: 'WAD',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ name: '', type: 'uint256' }],
-  },
-  {
-    type: 'function',
-    name: 'POOL',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ name: '', type: 'address' }],
-  },
-  {
-    type: 'function',
-    name: 'INFO',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ name: '', type: 'address' }],
-  },
-  {
-    type: 'function',
-    name: 'BUFFER',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ name: '', type: 'address' }],
   },
   {
     type: 'function',

@@ -4,9 +4,9 @@ import {MockBuffer} from './MockBuffer.sol';
 import {MockPoolInfoUtils} from './MockPoolInfoUtils.sol';
 
 contract MockVault {
-    MockPoolInfoUtils public immutable INFO;
-    MockBuffer public immutable BUFFER;
-    address public immutable POOL;
+    MockPoolInfoUtils private immutable INFO;
+    MockBuffer private immutable BUFFER;
+    address private immutable POOL;
 
     uint256[] public buckets;
     uint8 public assetDecimals;

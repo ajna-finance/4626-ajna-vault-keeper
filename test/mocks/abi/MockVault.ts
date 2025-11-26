@@ -41,27 +41,6 @@ export const mockVaultAbi = [
   },
   {
     type: 'function',
-    name: 'INFO',
-    inputs: [],
-    outputs: [{ name: '', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    name: 'BUFFER',
-    inputs: [],
-    outputs: [{ name: '', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    name: 'POOL',
-    inputs: [],
-    outputs: [{ name: '', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
     name: 'buckets',
     inputs: [{ name: '', type: 'uint256' }],
     outputs: [{ name: '', type: 'uint256' }],

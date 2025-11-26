@@ -9,6 +9,11 @@ export const bufferAbi = [
   },
   {
     type: 'error',
+    name: 'NotEnoughAssets',
+    inputs: [],
+  },
+  {
+    type: 'error',
     name: 'ReentrancyGuardActive',
     inputs: [],
   },
@@ -38,7 +43,7 @@ export const bufferAbi = [
   },
   {
     type: 'function',
-    name: 'ark',
+    name: 'vault',
     inputs: [],
     outputs: [{ name: '', type: 'address' }],
     stateMutability: 'view',

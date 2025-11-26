@@ -296,6 +296,8 @@ export async function _getKeeperData(): Promise<KeeperRunData> {
     _calculateBufferTarget(),
   ]);
 
+  buckets.sort((a: bigint, b: bigint) => (a > b ? 1 : -1));
+
   return {
     buckets,
     bufferTotal,

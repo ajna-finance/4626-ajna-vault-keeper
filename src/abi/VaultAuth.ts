@@ -6,6 +6,11 @@ export const vaultAuthAbi = [
   },
   {
     type: 'error',
+    name: 'ZeroAddress',
+    inputs: [],
+  },
+  {
+    type: 'error',
     name: 'NotAuthorized',
     inputs: [],
   },

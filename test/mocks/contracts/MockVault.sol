@@ -4,9 +4,9 @@ import {MockBuffer} from './MockBuffer.sol';
 import {MockPoolInfoUtils} from './MockPoolInfoUtils.sol';
 
 contract MockVault {
-    MockPoolInfoUtils public immutable INFO;
-    MockBuffer public immutable BUFFER;
-    address public immutable POOL;
+    MockPoolInfoUtils private immutable INFO;
+    MockBuffer private immutable BUFFER;
+    address private immutable POOL;
 
     uint256[] public buckets;
     uint8 public assetDecimals;
@@ -25,6 +25,18 @@ contract MockVault {
         POOL = _pool;
 
         assetDecimals = 18;
+    }
+
+    function pool() public view returns (address) {
+        return address(POOL);
+    }
+
+    function buffer() public view returns (address) {
+        return address(BUFFER);
+    }
+
+    function info() public view returns (address) {
+        return address(INFO);
     }
 
     function move(uint256 _fromBucket, uint256 _toBucket, uint256 _amount) public {

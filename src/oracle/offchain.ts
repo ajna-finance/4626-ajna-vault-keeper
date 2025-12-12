@@ -12,6 +12,14 @@ const headers: Record<string, string> = {
 };
 
 export async function getOffchainPrice(): Promise<number> {
+  // 1. If a fixed price is set in .env, use it (e.g. for stablecoins)
+  if (env.FIXED_PRICE !== undefined) {
+    // Only log this once to avoid spamming
+    console.log(`Using configured FIXED_PRICE: $${env.FIXED_PRICE}`);
+    return env.FIXED_PRICE;
+  }
+
+  // 2. Otherwise, fetch real price from CoinGecko (Original Logic)
   const address = env.QUOTE_TOKEN_ADDRESS;
 
   const res = await fetch(env.ORACLE_API_URL as string, { method: 'GET', headers });

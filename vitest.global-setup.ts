@@ -10,6 +10,7 @@ process.env.MAINNET_RPC_URL = process.env.RPC_URL;
 process.env.RPC_URL = 'http://127.0.0.1:8545';
 process.env.PRIVATE_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 process.env.CHAIN_NAME = 'Ethereum';
+process.env.CHAIN_ID = '1';
 process.env.OPTIMAL_BUCKET_DIFF = '1';
 process.env.ONCHAIN_ORACLE_PRIMARY = 'true';
 process.env.MIN_MOVE_AMOUNT = '1000000';

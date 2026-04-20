@@ -35,18 +35,21 @@ contract DeployScript is Script, StdCheats {
             vaultAuth
         );
 
-        address mockPoolAddress = address(new MockPool());
-        mockVaultAddress = address(new MockVault(mockPoolAddress));
         mockVaultAuthAddress = address(new MockVaultAuth());
         mockChronicleAddress = address(new MockChronicle());
-
-        MockVault(mockVaultAddress).setAuth(mockVaultAuthAddress);
 
         vaultAuth.setBufferRatio(5000);
         vaultAuth.setKeeper(deployerAddress, true);
 
         IERC20(vault.asset()).approve(address(vault), type(uint256).max);
         vault.deposit(100 * (10 ** 18), deployerAddress);
+
+        // Deploy mock pool + mock vault AFTER the real vault deposit so additional
+        // deployments don't shift block position / interest accrual for existing
+        // vault tests that depend on precise LP rounding.
+        address mockPoolAddress = address(new MockPool());
+        mockVaultAddress = address(new MockVault(mockPoolAddress));
+        MockVault(mockVaultAddress).setAuth(mockVaultAuthAddress);
         vm.stopBroadcast();
 
         string memory addresses = string.concat(

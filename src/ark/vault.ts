@@ -105,6 +105,10 @@ export function createVault(address: Address, vaultAuthAddress?: Address) {
 
     // pool
     getBucketInfo: async (index: bigint) => (await getPool()).read.bucketInfo([index]),
+    getBucketDetails: async (index: bigint): Promise<{ lps: bigint; collateral: bigint; bankruptcyTime: bigint }> => {
+      const info = (await (await getPool()).read.bucketInfo([index])) as readonly bigint[];
+      return { lps: BigInt(info[0]!), collateral: BigInt(info[1]!), bankruptcyTime: BigInt(info[2]!) };
+    },
     getCollateralAddress: async (): Promise<Address> =>
       (await (await getPool()).read.collateralAddress()) as Address,
     getVaultLps: async (bucket: bigint): Promise<bigint> => {

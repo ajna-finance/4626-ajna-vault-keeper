@@ -1,4 +1,4 @@
-import { describe, it, beforeEach, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, vi } from 'vitest';
 
 vi.mock('graphql-request', async () => {
   const actual = await vi.importActual('graphql-request');
@@ -9,50 +9,23 @@ import {
   setLenderLps,
   setLpToCollateral,
   setRemovedCollateralValue,
-  useMocks,
 } from '../helpers/vaultHelpers';
+import {
+  addOneBucket,
+  authAddr,
+  useForkSnapshot,
+  useSubgraphMock,
+  vaultAddr,
+} from '../helpers/testEnv';
 import { arkRun } from '../../src/keepers/arkKeeper';
-import { contract } from '../../src/utils/contract';
-import { client } from '../../src/utils/client';
 import { config, resolveArkSettings } from '../../src/utils/config';
 import { request } from 'graphql-request';
-import type { Address } from 'viem';
 
 const testSettings = resolveArkSettings(config.arks[0]!);
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 describe('arkKeeper detection preflight (regression)', () => {
-  let snapshot: string;
-
-  const vaultAddr = () => process.env.MOCK_VAULT_ADDRESS as Address;
-  const authAddr = () => process.env.MOCK_VAULT_AUTH_ADDRESS as Address;
-
-  // Minimal single-bucket setup — cheaper than the 18-bucket setMockState and
-  // sufficient for detection regression tests (arkRun bails before needing full state).
-  const addOneBucket = async (bucketIndex: bigint) => {
-    await contract('vault', vaultAddr())().write.addBucket(
-      bucketIndex,
-      1_000_000_000_000_000_000n,
-      1_000_000_000_000_000_000n,
-    );
-  };
-
-  beforeAll(async () => {
-    useMocks();
-    snapshot = await client.request({ method: 'evm_snapshot' as any, params: [] as any });
-  });
-
-  beforeEach(async () => {
-    await client.request({ method: 'evm_revert' as any, params: [snapshot] as any });
-    snapshot = await client.request({ method: 'evm_snapshot' as any, params: [] as any });
-
-    (request as any).mockReset?.();
-    (request as any).mockResolvedValue({ liquidationAuctions: [] });
-  });
-
-  afterAll(async () => {
-    await client.request({ method: 'evm_revert' as any, params: [snapshot] as any });
-  });
+  useForkSnapshot();
+  useSubgraphMock(request);
 
   it('aborts arkRun when collateral is detected in a non-optimal bucket', async () => {
     const bucket = 4149n;

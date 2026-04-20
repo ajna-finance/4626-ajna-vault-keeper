@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('graphql-request', async () => {
   const actual = await vi.importActual('graphql-request');
@@ -9,30 +9,31 @@ import {
   setAuthPaused,
   setLenderLps,
   setLpToCollateral,
-  useMocks,
 } from '../helpers/vaultHelpers';
+import {
+  addOneBucket,
+  authAddr,
+  useForkSnapshot,
+  useSubgraphMock,
+  vaultAddr,
+} from '../helpers/testEnv';
 import {
   detectOnly,
   _resetDedupStoreForTests,
   _resetArkLocksForTests,
 } from '../../src/keepers/recoveryKeeper';
-import { contract } from '../../src/utils/contract';
-import { client } from '../../src/utils/client';
 import { config, resolveRecoverySettings } from '../../src/utils/config';
 import { request } from 'graphql-request';
 import { log } from '../../src/utils/logger';
-import type { Address } from 'viem';
 
 const testRecoverySettings = resolveRecoverySettings(config.arks[0]!);
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 describe('recoveryKeeper detect mode', () => {
-  let snapshot: string;
+  useForkSnapshot();
+  useSubgraphMock(request);
+
   let logSpy: ReturnType<typeof vi.spyOn>;
   let warnSpy: ReturnType<typeof vi.spyOn>;
-
-  const vaultAddr = () => process.env.MOCK_VAULT_ADDRESS as Address;
-  const authAddr = () => process.env.MOCK_VAULT_AUTH_ADDRESS as Address;
 
   const target = () => ({
     vaultAddress: vaultAddr(),
@@ -40,37 +41,11 @@ describe('recoveryKeeper detect mode', () => {
     settings: testRecoverySettings,
   });
 
-  // Minimal bucket setup — one bucket via direct MockVault.addBucket.
-  // Avoids the heavy setMockState (18 buckets) which strains the mainnet fork RPC
-  // across multiple tests in the same file.
-  const addOneBucket = async (bucketIndex: bigint) => {
-    await contract('vault', vaultAddr())().write.addBucket(
-      bucketIndex,
-      1_000_000_000_000_000_000n,
-      1_000_000_000_000_000_000n,
-    );
-  };
-
-  beforeAll(async () => {
-    useMocks();
-    snapshot = await client.request({ method: 'evm_snapshot' as any, params: [] as any });
-  });
-
-  beforeEach(async () => {
-    await client.request({ method: 'evm_revert' as any, params: [snapshot] as any });
-    snapshot = await client.request({ method: 'evm_snapshot' as any, params: [] as any });
-
-    (request as any).mockReset?.();
-    (request as any).mockResolvedValue({ liquidationAuctions: [] });
-
+  beforeEach(() => {
     _resetDedupStoreForTests();
     _resetArkLocksForTests();
     logSpy = vi.spyOn(log, 'info');
     warnSpy = vi.spyOn(log, 'warn');
-  });
-
-  afterAll(async () => {
-    await client.request({ method: 'evm_revert' as any, params: [snapshot] as any });
   });
 
   it('emits collateral_recovery_required when collateral is detected', async () => {
@@ -82,7 +57,7 @@ describe('recoveryKeeper detect mode', () => {
     await detectOnly(target());
 
     const emitted = logSpy.mock.calls.find(
-      (c: any[]) => c[0]?.event === 'collateral_recovery_required',
+      (c) => (c[0] as { event?: string })?.event === 'collateral_recovery_required',
     );
     expect(emitted).toBeDefined();
     expect(emitted![0]).toMatchObject({
@@ -96,7 +71,7 @@ describe('recoveryKeeper detect mode', () => {
     await detectOnly(target());
 
     const emitted = logSpy.mock.calls.find(
-      (c: any[]) => c[0]?.event === 'collateral_recovery_required',
+      (c) => (c[0] as { event?: string })?.event === 'collateral_recovery_required',
     );
     expect(emitted).toBeUndefined();
   });
@@ -111,7 +86,7 @@ describe('recoveryKeeper detect mode', () => {
     await detectOnly(target());
 
     const emissions = logSpy.mock.calls.filter(
-      (c: any[]) => c[0]?.event === 'collateral_recovery_required',
+      (c) => (c[0] as { event?: string })?.event === 'collateral_recovery_required',
     );
     expect(emissions.length).toBe(1);
   });
@@ -122,12 +97,12 @@ describe('recoveryKeeper detect mode', () => {
     await detectOnly(target());
 
     const blocked = warnSpy.mock.calls.find(
-      (c: any[]) => c[0]?.event === 'recovery_blocked_admin_pause',
+      (c) => (c[0] as { event?: string })?.event === 'recovery_blocked_admin_pause',
     );
     expect(blocked).toBeDefined();
 
     const collateralAlert = logSpy.mock.calls.find(
-      (c: any[]) => c[0]?.event === 'collateral_recovery_required',
+      (c) => (c[0] as { event?: string })?.event === 'collateral_recovery_required',
     );
     expect(collateralAlert).toBeUndefined();
   });

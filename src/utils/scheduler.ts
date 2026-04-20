@@ -49,9 +49,12 @@ async function runOnce() {
     case 'recovery-detect':
       return runRecoveryDetect();
     case 'recovery-auto':
-      return runRecoveryExecute();
     case 'recovery-oneshot':
       return runRecoveryExecute();
+    default: {
+      const unreachable: never = env.BOT_MODE;
+      throw new Error(`Unhandled BOT_MODE: ${unreachable}`);
+    }
   }
 }
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, beforeEach, beforeAll, afterAll, vi } from 'vitest';
 
 vi.mock('graphql-request', async () => {
   const actual = await vi.importActual('graphql-request');

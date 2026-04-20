@@ -1,4 +1,4 @@
-import { type Address, erc20Abi, maxUint256 } from 'viem';
+import { type Address, erc20Abi } from 'viem';
 import { config, type ResolvedRecoverySettings, resolveRecoverySettings } from '../utils/config';
 import { client } from '../utils/client';
 import { log } from '../utils/logger';
@@ -10,6 +10,7 @@ import {
   UnconfiguredSwapExecutor,
 } from '../ark/swapExecutor';
 import {
+  abridgedViemError,
   getGasWithBuffer,
   parseRecoverCollateralLogs,
   parseReturnQuoteTokenLog,
@@ -189,6 +190,23 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
   const quoteToken = config.quoteTokenAddress;
   const wallet = client.account.address;
 
+  // Fail fast if the loaded wallet isn't the on-chain swapper for this vault.
+  // Catches misconfigured env (wrong key, wrong vault, wrong chain) before any
+  // recoverCollateral attempt wastes gas or reverts.
+  const swapper = await vault.getSwapper();
+  if (swapper.toLowerCase() !== wallet.toLowerCase()) {
+    log.error(
+      {
+        event: 'recovery_wallet_role_mismatch',
+        ark: target.vaultAddress,
+        loadedWallet: wallet,
+        onChainSwapper: swapper,
+      },
+      'loaded wallet is not the on-chain swapper; aborting',
+    );
+    return;
+  }
+
   // Stage 1: recoverCollateral (if fresh run, rcv == 0)
   if (rcv === 0n) {
     const candidates = await detectRecoverable(vault, { includeQuoteEstimate: true });
@@ -275,8 +293,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
     const expectedQuoteOut = await vault.lpToQuoteTokens(refillBucket, totalVaultLps);
 
     const chainId = config.chainId;
-    const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
-    const quoteReq: SwapQuoteRequest = {
+    const buildQuoteReq = (): SwapQuoteRequest => ({
       chainId,
       tokenIn: collateralToken,
       tokenOut: quoteToken,
@@ -285,15 +302,22 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
       maxValueLossBps: target.settings.maxValueLossBps,
       expectedQuoteOut,
       recipient: wallet,
-      deadline,
-    };
+      deadline: BigInt(Math.floor(Date.now() / 1000) + target.settings.swapDeadlineSec),
+    });
+
+    const quoteReq = buildQuoteReq();
 
     let quote;
     try {
       quote = await swapExecutor.quoteExactIn(quoteReq);
     } catch (err) {
       log.error(
-        { event: 'recovery_swap_failed', reason: 'quote_failed', ark: target.vaultAddress, err },
+        {
+          event: 'recovery_swap_failed',
+          reason: 'quote_failed',
+          ark: target.vaultAddress,
+          err: abridgedViemError(err),
+        },
         'swap quote failed',
       );
       return;
@@ -318,12 +342,18 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
     await approveExact(collateralToken, wallet, walletCollateralBal);
 
     const walletQuoteBefore = await balanceOf(quoteToken, wallet);
+    const executeReq = buildQuoteReq();
     let swapResult;
     try {
-      swapResult = await swapExecutor.executeExactIn(quoteReq);
+      swapResult = await swapExecutor.executeExactIn(executeReq);
     } catch (err) {
       log.error(
-        { event: 'recovery_swap_failed', reason: 'revert', ark: target.vaultAddress, err },
+        {
+          event: 'recovery_swap_failed',
+          reason: 'revert',
+          ark: target.vaultAddress,
+          err: abridgedViemError(err),
+        },
         'swap execute failed',
       );
       return;
@@ -405,6 +435,32 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
       'refill amount below LP_DUST on empty bucket',
     );
     return;
+  }
+
+  // Exchange rate check: if the amount we'd refill would mint proportionally less LP
+  // than the minLpMintedBps threshold vs. a perfect 1:1 bucket, the bucket is impaired
+  // (e.g., post-bankruptcy residual state). Bail rather than dump quote into a bad bucket.
+  if (walletQuoteBalFinal > 0n) {
+    const expectedLpForDeposit = await vault.lpToQuoteTokens(refillBucket, walletQuoteBalFinal);
+    if (expectedLpForDeposit > 0n) {
+      const ratioBps = (expectedLpForDeposit * 10000n) / walletQuoteBalFinal;
+      if (ratioBps < BigInt(target.settings.minLpMintedBps)) {
+        log.error(
+          {
+            event: 'recovery_refill_failed',
+            reason: 'poor_exchange_rate',
+            ark: target.vaultAddress,
+            refillBucket,
+            walletQuoteBal: walletQuoteBalFinal,
+            expectedLpForDeposit,
+            ratioBps,
+            minLpMintedBps: target.settings.minLpMintedBps,
+          },
+          'refill bucket exchange rate below minLpMintedBps',
+        );
+        return;
+      }
+    }
   }
 
   // Approve quote to vault and call returnQuoteToken
@@ -563,7 +619,7 @@ async function handleRecoveryTx(
     return await wait(hash);
   } catch (err) {
     log.error(
-      { event: 'recovery_tx_failed', ...context, err },
+      { event: 'recovery_tx_failed', ...context, err: abridgedViemError(err) },
       `recovery tx failed: ${context.action}`,
     );
     return null;
@@ -584,5 +640,3 @@ export function getRecoveryTargets(): ArkTarget[] {
   }));
 }
 
-// Silence unused import (kept for future signer extension) — viem maxUint256.
-void maxUint256;

@@ -224,7 +224,7 @@ export function parseReturnQuoteTokenLog(
   return { bucket: l.args.bucket, amount: l.args.amount, lps: l.args.lps };
 }
 
-function abridgedViemError(err: unknown) {
+export function abridgedViemError(err: unknown) {
   const e = err as any;
   const data = getRevertData(err);
   const errorName = getErrorName(err, data);

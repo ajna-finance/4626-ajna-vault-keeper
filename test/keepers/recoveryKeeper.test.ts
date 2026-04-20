@@ -17,6 +17,7 @@ vi.mock('../../src/utils/config', () => ({
       maxSlippageBps: 50,
       maxValueLossBps: 100,
       minLpMintedBps: 9900,
+      swapDeadlineSec: 300,
     },
     arks: [],
     arkGlobal: { minTimeSinceBankruptcy: 259200 },
@@ -31,6 +32,7 @@ vi.mock('../../src/utils/config', () => ({
     minLpMintedBps: 9900,
     minTimeSinceBankruptcy: 259200n,
     dedupWindowMs: 3_600_000,
+    swapDeadlineSec: 300,
   }),
 }));
 

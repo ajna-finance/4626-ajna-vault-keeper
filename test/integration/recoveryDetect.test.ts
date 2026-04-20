@@ -11,7 +11,6 @@ import {
   setLpToCollateral,
   useMocks,
 } from '../helpers/vaultHelpers';
-import { createVault } from '../../src/ark/vault';
 import {
   detectOnly,
   _resetDedupStoreForTests,

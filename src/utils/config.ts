@@ -72,6 +72,7 @@ type RawConfig = {
     maxSlippageBps?: number;
     maxValueLossBps?: number;
     minLpMintedBps?: number;
+    swapDeadlineSec?: number;
   };
 
   arks: ArkConfig[];
@@ -209,6 +210,7 @@ raw.recovery.dedupWindowMs ??= 3_600_000;
 raw.recovery.maxSlippageBps ??= 50;
 raw.recovery.maxValueLossBps ??= 100;
 raw.recovery.minLpMintedBps ??= 9900;
+raw.recovery.swapDeadlineSec ??= 300;
 
 const isBps = (n: number) => Number.isInteger(n) && n >= 0 && n <= 10000;
 if (!isBps(raw.recovery.maxSlippageBps))
@@ -245,6 +247,7 @@ export type ResolvedRecoverySettings = {
   minLpMintedBps: number;
   minTimeSinceBankruptcy: bigint;
   dedupWindowMs: number;
+  swapDeadlineSec: number;
 };
 
 export function resolveArkSettings(ark: ArkConfig): ResolvedArkSettings {
@@ -271,6 +274,7 @@ export function resolveRecoverySettings(ark: ArkConfig): ResolvedRecoverySetting
       ark.minTimeSinceBankruptcy ?? raw.arkGlobal.minTimeSinceBankruptcy!,
     ),
     dedupWindowMs: g.dedupWindowMs!,
+    swapDeadlineSec: g.swapDeadlineSec!,
   };
   if (r.refillBucketOverride != null) {
     resolved.refillBucketOverride = BigInt(r.refillBucketOverride);

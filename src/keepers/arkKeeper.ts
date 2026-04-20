@@ -14,6 +14,10 @@ const haltedArks = new Set<Address>();
 let vault: ReturnType<typeof createVault>;
 let _settings: ResolvedArkSettings;
 
+export function isHalted(): boolean {
+  return halted;
+}
+
 // ============= Types =============
 
 type KeeperRunData = {

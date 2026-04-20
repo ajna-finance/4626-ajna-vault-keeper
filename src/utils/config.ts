@@ -106,6 +106,8 @@ try {
   throw error;
 }
 
+const seenVaultAddresses = new Set<string>();
+const skipDupVaultCheck = process.env.TEST_ENV === 'true';
 for (const [i, ark] of raw.arks.entries()) {
   if (ark.allocation.max === 0)
     throw new Error(`config.json: arks[${i}].allocation.max must not be 0`);
@@ -113,6 +115,14 @@ for (const [i, ark] of raw.arks.entries()) {
     throw new Error(
       `config.json: arks[${i}].allocation.min (${ark.allocation.min}) must not exceed max (${ark.allocation.max})`,
     );
+  if (!skipDupVaultCheck) {
+    const vaultKey = ark.vaultAddress.toLowerCase();
+    if (seenVaultAddresses.has(vaultKey))
+      throw new Error(
+        `config.json: duplicate arks[].vaultAddress ${ark.vaultAddress} — each vault must appear at most once`,
+      );
+    seenVaultAddresses.add(vaultKey);
+  }
 }
 
 if (raw.arks.length > 0 && raw.buffer.allocation > 0) {
@@ -213,20 +223,50 @@ raw.recovery.minLpMintedBps ??= 9900;
 raw.recovery.swapDeadlineSec ??= 300;
 
 const isBps = (n: number) => Number.isInteger(n) && n >= 0 && n <= 10000;
-if (!isBps(raw.recovery.maxSlippageBps))
-  throw new Error(`config.json: recovery.maxSlippageBps must be an integer 0-10000`);
-if (!isBps(raw.recovery.maxValueLossBps))
-  throw new Error(`config.json: recovery.maxValueLossBps must be an integer 0-10000`);
-if (!isBps(raw.recovery.minLpMintedBps))
-  throw new Error(`config.json: recovery.minLpMintedBps must be an integer 0-10000`);
+// Slippage is DEX execution slippage (quoted price vs executed price). Should be tight;
+// 5% is already extreme for routine swaps. Cap at 10% for edge-case illiquidity.
+const isSaneSlippageBps = (n: number) => isBps(n) && n <= 1000;
+// Value-loss is vault-debt vs swap output. Allow up to 50% for degraded market
+// conditions, but anything beyond that is an obvious misconfiguration.
+const isSafeLossBps = (n: number) => isBps(n) && n <= 5000;
+if (!isSaneSlippageBps(raw.recovery.maxSlippageBps))
+  throw new Error(`config.json: recovery.maxSlippageBps must be an integer 0-1000`);
+if (!isSafeLossBps(raw.recovery.maxValueLossBps))
+  throw new Error(`config.json: recovery.maxValueLossBps must be an integer 0-5000`);
+// minLpMintedBps caps the health check at <10000: a bucket's round-trip quote is always
+// <= deposit (accrued interest aside), so 10000 (100%) is mathematically unachievable
+// and would halt every refill. Reject at load time to avoid the foot-gun.
+if (!isBps(raw.recovery.minLpMintedBps) || raw.recovery.minLpMintedBps >= 10000)
+  throw new Error(`config.json: recovery.minLpMintedBps must be an integer 0-9999`);
+if (
+  !Number.isInteger(raw.recovery.swapDeadlineSec) ||
+  raw.recovery.swapDeadlineSec < 60 ||
+  raw.recovery.swapDeadlineSec > 3600
+)
+  throw new Error(
+    `config.json: recovery.swapDeadlineSec must be an integer 60-3600 seconds`,
+  );
 
 for (const [i, ark] of raw.arks.entries()) {
   const r = ark.recovery;
   if (r == null) continue;
-  if (r.maxSlippageBps != null && !isBps(r.maxSlippageBps))
-    throw new Error(`config.json: arks[${i}].recovery.maxSlippageBps must be an integer 0-10000`);
-  if (r.maxValueLossBps != null && !isBps(r.maxValueLossBps))
-    throw new Error(`config.json: arks[${i}].recovery.maxValueLossBps must be an integer 0-10000`);
+  if (r.maxSlippageBps != null && !isSaneSlippageBps(r.maxSlippageBps))
+    throw new Error(`config.json: arks[${i}].recovery.maxSlippageBps must be an integer 0-1000`);
+  if (r.maxValueLossBps != null && !isSafeLossBps(r.maxValueLossBps))
+    throw new Error(`config.json: arks[${i}].recovery.maxValueLossBps must be an integer 0-5000`);
+  if (r.refillBucketOverride != null) {
+    try {
+      const bi = BigInt(r.refillBucketOverride);
+      if (bi < 0n || bi > 7388n)
+        throw new Error(
+          `config.json: arks[${i}].recovery.refillBucketOverride must be a valid Ajna bucket index (0-7388)`,
+        );
+    } catch {
+      throw new Error(
+        `config.json: arks[${i}].recovery.refillBucketOverride must be a valid numeric string`,
+      );
+    }
+  }
 }
 
 // ============= Export =============

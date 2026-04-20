@@ -4,6 +4,7 @@ import { client } from '../utils/client';
 import { log } from '../utils/logger';
 import { createVault } from '../ark/vault';
 import { detectRecoverable, type RecoverableBucket } from '../ark/recovery';
+import { isHalted } from './arkKeeper';
 import {
   type SwapExecutor,
   type SwapQuoteRequest,
@@ -76,11 +77,16 @@ export function deriveRecoveryStage(input: {
 
 // ============= Dedup store =============
 
+const DEDUP_STORE_MAX_ENTRIES = 1000;
 const dedupStore = new Map<string, number>();
+// Separate store for dust warnings so they don't compete with real alerts for LRU slots.
+const dustDedupStore = new Map<string, number>();
 
 export function dedupKey(evt: Pick<RecoveryRequiredEvent, 'chainId' | 'arkAddress' | 'buckets'>): string {
+  // Lowercase arkAddress: config stores verbatim casing and an operator re-casing a
+  // 0xAbC... to 0xabc... between restarts would otherwise silently bypass dedup.
   const sortedIndexes = [...evt.buckets].map((b) => b.index).sort((a, b) => (a < b ? -1 : 1));
-  return `${evt.chainId}:${evt.arkAddress}:${sortedIndexes.join(',')}`;
+  return `${evt.chainId}:${evt.arkAddress.toLowerCase()}:${sortedIndexes.join(',')}`;
 }
 
 export function shouldEmitAlert(
@@ -90,7 +96,23 @@ export function shouldEmitAlert(
 ): boolean {
   const key = dedupKey(evt);
   const last = dedupStore.get(key);
-  if (last != null && now - last < windowMs) return false;
+  // Clock-skew guard: if system clock moved backwards (NTP), never silence the alert.
+  if (last != null && now >= last && now - last < windowMs) {
+    // Suppressed hit: refresh LRU position without changing the stored timestamp.
+    // Otherwise a hot suppressed key can be evicted by 1000 new keys within its window.
+    dedupStore.delete(key);
+    dedupStore.set(key, last);
+    return false;
+  }
+  // Bounded LRU: for a new key, evict the oldest-inserted entry when at capacity.
+  // For an existing key, delete-then-set to move it to the tail of insertion order
+  // (JS Map iterates in insertion order, so delete+set makes this genuine LRU).
+  if (dedupStore.has(key)) {
+    dedupStore.delete(key);
+  } else if (dedupStore.size >= DEDUP_STORE_MAX_ENTRIES) {
+    const oldestKey = dedupStore.keys().next().value;
+    if (oldestKey !== undefined) dedupStore.delete(oldestKey);
+  }
   dedupStore.set(key, now);
   return true;
 }
@@ -141,10 +163,27 @@ export async function execute(
 
 async function runDetectOnly(target: ArkTarget): Promise<void> {
   const vault = createVault(target.vaultAddress, target.vaultAuthAddress);
-  const [authPaused, rcv] = await Promise.all([
+  const [authPaused, rcv, onChainAuth] = await Promise.all([
     vault.isAuthPaused(),
     vault.getRemovedCollateralValue(),
+    vault.getAuthAddress(),
   ]);
+
+  // Auth pointer drift: if the vault's on-chain AUTH differs from the config value,
+  // isAuthPaused() read paused state from the wrong contract. Flag loudly — detect
+  // mode can't recover from this, but the alert lets operator fix config.
+  if (onChainAuth.toLowerCase() !== target.vaultAuthAddress.toLowerCase()) {
+    log.error(
+      {
+        event: 'recovery_auth_drift',
+        ark: target.vaultAddress,
+        configVaultAuth: target.vaultAuthAddress,
+        onChainAuth,
+      },
+      'vault.AUTH() does not match config vaultAuthAddress; detection may be unreliable',
+    );
+    return;
+  }
 
   if (authPaused && rcv === 0n) {
     emitAlert({
@@ -168,6 +207,17 @@ async function runDetectOnly(target: ArkTarget): Promise<void> {
 // ============= Execute mode =============
 
 async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promise<void> {
+  // If arkKeeper halted (e.g. LUPBelowHTP on a recoverCollateral tx), don't retry every
+  // tick — the on-chain precondition won't change from under us and each attempt just
+  // burns gas on the same revert.
+  if (isHalted()) {
+    log.warn(
+      { event: 'recovery_skipped', reason: 'keeper_halted', ark: target.vaultAddress },
+      'recovery skipped: keeper halted',
+    );
+    return;
+  }
+
   const vault = createVault(target.vaultAddress, target.vaultAuthAddress);
 
   const [authPaused, rcv] = await Promise.all([
@@ -193,7 +243,10 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
   // Fail fast if the loaded wallet isn't the on-chain swapper for this vault.
   // Catches misconfigured env (wrong key, wrong vault, wrong chain) before any
   // recoverCollateral attempt wastes gas or reverts.
-  const swapper = await vault.getSwapper();
+  const [swapper, onChainAuth] = await Promise.all([
+    vault.getSwapper(),
+    vault.getAuthAddress(),
+  ]);
   if (swapper.toLowerCase() !== wallet.toLowerCase()) {
     log.error(
       {
@@ -205,6 +258,92 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
       'loaded wallet is not the on-chain swapper; aborting',
     );
     return;
+  }
+  // Auth pointer drift: if the vault's on-chain AUTH differs from the vaultAuthAddress
+  // in config, we may have been reading paused/swapper state from the wrong contract.
+  if (onChainAuth.toLowerCase() !== target.vaultAuthAddress.toLowerCase()) {
+    log.error(
+      {
+        event: 'recovery_auth_drift',
+        ark: target.vaultAddress,
+        configVaultAuth: target.vaultAuthAddress,
+        onChainAuth,
+      },
+      'vault.AUTH() does not match config vaultAuthAddress; aborting',
+    );
+    return;
+  }
+
+  // Dust thresholds — used by both the fresh-run contamination guard and the resume
+  // path's dust normalization so a 1-wei transfer to the swapper can't DoS either path.
+  const lpDust = await vault.getLpDust();
+  const assetDecimals = Number(await vault.getAssetDecimals());
+  const assetScale = 10n ** BigInt(assetDecimals);
+  const wadScale = 10n ** 18n;
+  // Collateral dust threshold: no general-purpose dust concept for arbitrary collateral
+  // tokens. Use a conservative absolute floor (1e3 wei) which dwarfs accidental 1-wei
+  // sends but is negligible for real recovery amounts.
+  const COLLATERAL_DUST_FLOOR = 1000n;
+
+  // Contamination guard: the swapper wallet must hold nothing material to this vault
+  // between cycles. If rcv==0 (no recovery in progress) but wallet has material balance,
+  // those tokens didn't come from this recovery — the state machine would misread them
+  // as recovered/swapped state and sweep them into the vault on the next run.
+  const [entryCollateralBal, entryQuoteBal] = await Promise.all([
+    balanceOf(collateralToken, wallet),
+    balanceOf(quoteToken, wallet),
+  ]);
+  const entryQuoteBalWad = (entryQuoteBal * wadScale) / assetScale;
+  const quoteIsMaterial = entryQuoteBalWad >= lpDust;
+  const collateralIsMaterial = entryCollateralBal >= COLLATERAL_DUST_FLOOR;
+
+  if (rcv === 0n) {
+    if (quoteIsMaterial || collateralIsMaterial) {
+      log.error(
+        {
+          event: 'recovery_wallet_contaminated',
+          ark: target.vaultAddress,
+          wallet,
+          collateralToken,
+          quoteToken,
+          entryCollateralBal,
+          entryQuoteBal,
+          entryQuoteBalWad,
+          lpDust,
+          quoteIsMaterial,
+          collateralIsMaterial,
+        },
+        'swapper wallet has material pre-existing balance with rcv=0; operator must clear wallet before recovery',
+      );
+      return;
+    }
+    if (entryCollateralBal > 0n || entryQuoteBal > 0n) {
+      // Dedup dust warnings so we don't spam if operator hasn't swept yet. Uses a
+      // dedicated store so dust entries don't contend with real alerts for LRU slots.
+      const dustKey = `dust:${config.chainId}:${target.vaultAddress}`;
+      const now = Date.now();
+      const lastDust = dustDedupStore.get(dustKey);
+      const suppressDust = lastDust != null && now >= lastDust && now - lastDust < target.settings.dedupWindowMs;
+      if (!suppressDust) {
+        // Simple bounded store — evict oldest entry when at cap.
+        if (!dustDedupStore.has(dustKey) && dustDedupStore.size >= DEDUP_STORE_MAX_ENTRIES) {
+          const oldest = dustDedupStore.keys().next().value;
+          if (oldest !== undefined) dustDedupStore.delete(oldest);
+        }
+        dustDedupStore.delete(dustKey);
+        dustDedupStore.set(dustKey, now);
+        log.warn(
+          {
+            event: 'recovery_wallet_dust',
+            ark: target.vaultAddress,
+            wallet,
+            entryCollateralBal,
+            entryQuoteBal,
+          },
+          'swapper wallet has dust-level balance; operator should sweep',
+        );
+      }
+    }
   }
 
   // Stage 1: recoverCollateral (if fresh run, rcv == 0)
@@ -223,8 +362,12 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
     );
 
     const walletCollateralBefore = await balanceOf(collateralToken, wallet);
-    const indexes = candidates.map((c) => c.index);
-    const amts = candidates.map((c) => c.estimatedCollateralWad);
+    // Ascending-sort bucket indexes before submitting. The vault's array form does not
+    // document an ordering requirement, but on-chain merge-style loops often assume
+    // ascending; sorted inputs also stabilize replay analysis and match dedupKey's order.
+    const sorted = [...candidates].sort((a, b) => (a.index < b.index ? -1 : a.index > b.index ? 1 : 0));
+    const indexes = sorted.map((c) => c.index);
+    const amts = sorted.map((c) => c.estimatedCollateralWad);
 
     const gas = await getGasWithBuffer(
       'vault',
@@ -232,6 +375,23 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
       [indexes, amts],
       target.vaultAddress,
     );
+    // Concurrency guard (plan's layer 3): re-read rcv immediately before submitting.
+    // The contract's recoverCollateral only checks AUTH.paused(), NOT rcv, so two
+    // processes can both send recoverCollateral if we don't pre-check here. If another
+    // process beat us to it, rcv > 0 at this point — bail instead of double-recovering.
+    const rcvPreWrite = await vault.getRemovedCollateralValue();
+    if (rcvPreWrite !== 0n) {
+      log.error(
+        {
+          event: 'recovery_state_mismatch',
+          ark: target.vaultAddress,
+          expected: 0n,
+          observed: rcvPreWrite,
+        },
+        'rcv changed between preflight and recoverCollateral submission; another process may be recovering',
+      );
+      return;
+    }
     const receipt = await handleRecoveryTx(vault.recoverCollateral(indexes, amts, gas), {
       action: 'recoverCollateral',
       ark: target.vaultAddress,
@@ -251,11 +411,18 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
       'recoverCollateral succeeded',
     );
   } else {
-    // Resume path: stage already known via chain state + wallet balances
-    const [walletCollateralBal, walletQuoteBal] = await Promise.all([
+    // Resume path: stage derived from chain state + wallet balances.
+    // Normalize against dust thresholds first — an attacker can send 1 wei of quote to
+    // the swapper between runs to flip a legitimate RECOVERED stage into
+    // PARTIAL_SWAP_AMBIGUOUS and halt recovery. Treat dust as zero for stage derivation.
+    const [walletCollateralRaw, walletQuoteRaw] = await Promise.all([
       balanceOf(collateralToken, wallet),
       balanceOf(quoteToken, wallet),
     ]);
+    const walletQuoteRawWad = (walletQuoteRaw * wadScale) / assetScale;
+    const walletCollateralBal =
+      walletCollateralRaw >= COLLATERAL_DUST_FLOOR ? walletCollateralRaw : 0n;
+    const walletQuoteBal = walletQuoteRawWad >= lpDust ? walletQuoteRaw : 0n;
     const stage = deriveRecoveryStage({
       authPaused,
       removedCollateralValue: rcv,
@@ -270,6 +437,8 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
         stage,
         walletCollateralBal,
         walletQuoteBal,
+        walletCollateralRaw,
+        walletQuoteRaw,
       },
       `resuming from stage ${stage}`,
     );
@@ -282,16 +451,35 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
     }
   }
 
-  // Resolve refill bucket now; some stages need it for the quote call
-  const refillBucket =
-    target.settings.refillBucketOverride ?? ((await vault.getMinBucketIndex()) as bigint);
+  // Resolve refill bucket now; some stages need it for the quote call.
+  // Runtime-validate against AUTH.minBucketIndex() since config only validates the raw
+  // range. _validDestination in AjnaVaultLibrary reverts BucketIndexTooLow if refillBucket
+  // is below minBucketIndex — catch it pre-flight after collateral is already recovered.
+  const minBucketIndex = (await vault.getMinBucketIndex()) as bigint;
+  const refillBucket = target.settings.refillBucketOverride ?? minBucketIndex;
+  if (refillBucket < minBucketIndex) {
+    log.error(
+      {
+        event: 'recovery_refill_bucket_override_invalid',
+        ark: target.vaultAddress,
+        refillBucketOverride: target.settings.refillBucketOverride,
+        minBucketIndex,
+      },
+      'refillBucketOverride is below AUTH.minBucketIndex; would revert on-chain',
+    );
+    return;
+  }
 
-  // Stage 2: swap (if wallet still holds collateral)
+  // The vault's rcv is the quote-denominated WAD value of the recovered collateral at
+  // the bucket's sell price. That's what the vault is owed and what the swap must produce
+  // to keep the vault whole. Using rcv as the floor (not a vault-LP projection) aligns the
+  // slippage guard with the actual debt.
+  const rcvAtSwapTime = rcv === 0n ? await vault.getRemovedCollateralValue() : rcv;
+
+  // Stage 2: swap (if wallet still holds material collateral). Dust-level balances
+  // don't justify a swap round-trip; they'd quote/execute for near-nothing and fail.
   const walletCollateralBal = await balanceOf(collateralToken, wallet);
-  if (walletCollateralBal > 0n) {
-    const totalVaultLps = await sumVaultLps(vault);
-    const expectedQuoteOut = await vault.lpToQuoteTokens(refillBucket, totalVaultLps);
-
+  if (walletCollateralBal >= COLLATERAL_DUST_FLOOR) {
     const chainId = config.chainId;
     const buildQuoteReq = (): SwapQuoteRequest => ({
       chainId,
@@ -300,7 +488,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
       amountIn: walletCollateralBal,
       maxSlippageBps: target.settings.maxSlippageBps,
       maxValueLossBps: target.settings.maxValueLossBps,
-      expectedQuoteOut,
+      expectedQuoteOut: rcvAtSwapTime,
       recipient: wallet,
       deadline: BigInt(Math.floor(Date.now() / 1000) + target.settings.swapDeadlineSec),
     });
@@ -327,7 +515,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
         event: 'recovery_step',
         step: 'swap_quoted',
         ark: target.vaultAddress,
-        expectedQuoteOut,
+        rcvAtSwapTime,
         quote,
       },
       'swap quoted',
@@ -361,19 +549,23 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
     const walletQuoteAfter = await balanceOf(quoteToken, wallet);
     const actualAmountOut = walletQuoteAfter - walletQuoteBefore;
 
-    const minAcceptable = (expectedQuoteOut * BigInt(10000 - target.settings.maxValueLossBps)) / 10000n;
-    if (actualAmountOut < minAcceptable) {
+    // Convert the swap output to WAD so it compares apples-to-apples with rcv.
+    const actualAmountOutWad = (actualAmountOut * wadScale) / assetScale;
+    const minAcceptableWad =
+      (rcvAtSwapTime * BigInt(10000 - target.settings.maxValueLossBps)) / 10000n;
+    if (actualAmountOutWad < minAcceptableWad) {
       log.error(
         {
           event: 'recovery_swap_value_loss_exceeded',
           ark: target.vaultAddress,
-          expectedQuoteOut,
+          rcvAtSwapTime,
           actualAmountOut,
+          actualAmountOutWad,
           maxValueLossBps: target.settings.maxValueLossBps,
-          minAcceptable,
+          minAcceptableWad,
           swapResult,
         },
-        'swap output below vault-value threshold, halting',
+        'swap output below vault-debt threshold, halting',
       );
       return;
     }
@@ -383,7 +575,8 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
         event: 'recovery_swap_executed',
         ark: target.vaultAddress,
         actualAmountOut,
-        expectedQuoteOut,
+        actualAmountOutWad,
+        rcvAtSwapTime,
         txHash: swapResult.txHash,
         routeId: swapResult.routeId,
       },
@@ -392,17 +585,23 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
   }
 
   // Stage 3: refill bucket pre-check + returnQuoteToken
+  // walletQuoteBalFinal is in ASSET decimals (from ERC20.balanceOf).
+  // The vault's returnQuoteToken treats _amt as WAD and internally calls
+  // _convertWadToAsset(_amt) to pull that many asset units. We must therefore
+  // pass WAD to the contract while approving in asset decimals (approveExact is
+  // an ERC20 call, which is asset-dec). LP_DUST is also WAD.
   const walletQuoteBalFinal = await balanceOf(quoteToken, wallet);
-  const refillInfo = await vault.getBucketInfo(refillBucket);
-  const refillLps = (refillInfo as unknown as [bigint, bigint, bigint, bigint, bigint])[0];
-  const refillBankruptcyTime = (refillInfo as unknown as [
+  const walletQuoteBalFinalWad = (walletQuoteBalFinal * wadScale) / assetScale;
+  const refillInfo = (await vault.getBucketInfo(refillBucket)) as unknown as [
     bigint,
     bigint,
     bigint,
     bigint,
     bigint,
-  ])[2];
-  const lpDust = await vault.getLpDust();
+  ];
+  const refillLps = refillInfo[0];
+  const refillCollateral = refillInfo[1];
+  const refillBankruptcyTime = refillInfo[2];
 
   if (
     refillBankruptcyTime > 0n &&
@@ -422,7 +621,25 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
     return;
   }
 
-  if (refillLps === 0n && walletQuoteBalFinal < lpDust) {
+  // _validDestination in AjnaVaultLibrary reverts with BucketLPDangerous when
+  // 0 < bucketLP <= 1_000_000. Catch it pre-flight instead of wasting gas on a
+  // tx that was doomed from submission.
+  if (refillLps > 0n && refillLps <= 1_000_000n) {
+    log.error(
+      {
+        event: 'recovery_refill_failed',
+        reason: 'bucket_lp_dangerous',
+        ark: target.vaultAddress,
+        refillBucket,
+        refillLps,
+      },
+      'refill bucket LP in dangerous range (1 to 1_000_000); would revert BucketLPDangerous',
+    );
+    return;
+  }
+
+  // Dust floor: when the bucket is empty, the deposit must clear LP_DUST (WAD).
+  if (refillLps === 0n && walletQuoteBalFinalWad < lpDust) {
     log.error(
       {
         event: 'recovery_refill_failed',
@@ -430,6 +647,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
         ark: target.vaultAddress,
         refillBucket,
         walletQuoteBal: walletQuoteBalFinal,
+        walletQuoteBalFinalWad,
         lpDust,
       },
       'refill amount below LP_DUST on empty bucket',
@@ -437,14 +655,37 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
     return;
   }
 
-  // Exchange rate check: if the amount we'd refill would mint proportionally less LP
-  // than the minLpMintedBps threshold vs. a perfect 1:1 bucket, the bucket is impaired
-  // (e.g., post-bankruptcy residual state). Bail rather than dump quote into a bad bucket.
-  if (walletQuoteBalFinal > 0n) {
-    const expectedLpForDeposit = await vault.lpToQuoteTokens(refillBucket, walletQuoteBalFinal);
-    if (expectedLpForDeposit > 0n) {
-      const ratioBps = (expectedLpForDeposit * 10000n) / walletQuoteBalFinal;
-      if (ratioBps < BigInt(target.settings.minLpMintedBps)) {
+  // Zero-quote guard: if Stage 2 was skipped (sub-dust collateral recovered) or the
+  // wallet was externally swept, we'd submit returnQuoteToken(bucket, 0) which either
+  // reverts or no-ops, leaving rcv>0 and the vault paused forever. Bail to operator.
+  if (walletQuoteBalFinalWad === 0n) {
+    log.error(
+      {
+        event: 'recovery_refill_failed',
+        reason: 'no_quote_to_refill',
+        ark: target.vaultAddress,
+        refillBucket,
+        walletQuoteBal: walletQuoteBalFinal,
+      },
+      'wallet has no quote tokens to refill; rcv>0 but nothing to return, operator attention required',
+    );
+    return;
+  }
+
+  // Bucket health proxy: only meaningful for pure-quote buckets. For a pure-quote
+  // bucket, 1 LP ≈ 1 quote (plus accrued interest), so lpToQuoteTokens(X) should return
+  // >= X. Below minLpMintedBps indicates bankruptcy residue or other LP impairment.
+  //
+  // For MIXED buckets (non-zero collateral), lpToQuoteTokens(X) legitimately returns
+  // less than X — the LP represents a claim on both quote AND collateral, so the
+  // quote-redeemable portion is < X even in a perfectly healthy bucket. Skip the check
+  // in that case to avoid false-positive halts. The bucket's bankruptcy state and
+  // LP_DUST / BucketLPDangerous guards already cover the main safety cases.
+  if (refillCollateral === 0n && walletQuoteBalFinalWad > 0n) {
+    const roundTripQuote = await vault.lpToQuoteTokens(refillBucket, walletQuoteBalFinalWad);
+    if (roundTripQuote > 0n) {
+      const healthBps = (roundTripQuote * 10000n) / walletQuoteBalFinalWad;
+      if (healthBps < BigInt(target.settings.minLpMintedBps)) {
         log.error(
           {
             event: 'recovery_refill_failed',
@@ -452,18 +693,18 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
             ark: target.vaultAddress,
             refillBucket,
             walletQuoteBal: walletQuoteBalFinal,
-            expectedLpForDeposit,
-            ratioBps,
+            roundTripQuote,
+            healthBps,
             minLpMintedBps: target.settings.minLpMintedBps,
           },
-          'refill bucket exchange rate below minLpMintedBps',
+          'refill bucket health below minLpMintedBps threshold',
         );
         return;
       }
     }
   }
 
-  // Approve quote to vault and call returnQuoteToken
+  // Approve quote to vault (asset decimals — ERC20.transferFrom semantic).
   await approveExact(quoteToken, target.vaultAddress, walletQuoteBalFinal);
 
   log.info(
@@ -472,19 +713,21 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
       step: 'refill_started',
       ark: target.vaultAddress,
       refillBucket,
-      amount: walletQuoteBalFinal,
+      amountAsset: walletQuoteBalFinal,
+      amountWad: walletQuoteBalFinalWad,
     },
     'refill started',
   );
 
+  // Contract treats the _amt argument as WAD and pulls _convertWadToAsset(_amt) asset units.
   const refillGas = await getGasWithBuffer(
     'vault',
     'returnQuoteToken',
-    [refillBucket, walletQuoteBalFinal],
+    [refillBucket, walletQuoteBalFinalWad],
     target.vaultAddress,
   );
   const refillReceipt = await handleRecoveryTx(
-    vault.returnQuoteToken(refillBucket, walletQuoteBalFinal, refillGas),
+    vault.returnQuoteToken(refillBucket, walletQuoteBalFinalWad, refillGas),
     {
       action: 'returnQuoteToken',
       ark: target.vaultAddress,
@@ -563,12 +806,6 @@ async function buildRecoveryRequiredEvent(
     authPaused,
     removedCollateralValue: rcv,
   };
-}
-
-async function sumVaultLps(vault: ReturnType<typeof createVault>): Promise<bigint> {
-  const buckets = (await vault.getBuckets()) as readonly bigint[];
-  const lps = await Promise.all(buckets.map((b) => vault.getVaultLps(b)));
-  return lps.reduce((acc, x) => acc + x, 0n);
 }
 
 async function balanceOf(token: Address, owner: Address): Promise<bigint> {

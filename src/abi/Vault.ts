@@ -93,7 +93,7 @@ export const vaultAbi = [
     type: 'event',
     name: 'Drain',
     inputs: [
-      { name: 'caller', type: 'address', indexed: true },
+      { name: 'caller', type: 'address', indexed: false },
       { name: 'bucket', type: 'uint256', indexed: false },
       { name: 'lps', type: 'uint256', indexed: false },
       { name: 'newLps', type: 'uint256', indexed: false },

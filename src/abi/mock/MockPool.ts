@@ -21,6 +21,26 @@ export const mockPoolAbi = [
   },
   {
     type: 'function',
+    name: 'collateralAddress',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'lenderInfo',
+    inputs: [
+      { name: '_index', type: 'uint256' },
+      { name: '_lender', type: 'address' },
+    ],
+    outputs: [
+      { name: '', type: 'uint256' },
+      { name: '', type: 'uint256' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     name: 'setBankruptcyTime',
     inputs: [{ name: '_timestamp', type: 'uint256', internalType: 'uint256' }],
     outputs: [],
@@ -30,6 +50,24 @@ export const mockPoolAbi = [
     type: 'function',
     name: 'setLps',
     inputs: [{ name: '_lps', type: 'uint256', internalType: 'uint256' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'setCollateralAddress',
+    inputs: [{ name: '_addr', type: 'address' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'setLenderLps',
+    inputs: [
+      { name: '_index', type: 'uint256' },
+      { name: '_lender', type: 'address' },
+      { name: '_lps', type: 'uint256' },
+    ],
     outputs: [],
     stateMutability: 'nonpayable',
   },

@@ -7,6 +7,7 @@ import { getGasWithBuffer, handleTransaction, type TransactionData } from '../ut
 import { getPrice } from '../oracle/price.ts';
 import { poolHasBadDebt } from '../subgraph/poolHealth.ts';
 import { createVault } from '../ark/vault.ts';
+import { detectRecoverable } from '../ark/recovery.ts';
 import { type Address } from 'viem';
 
 const haltedArks = new Set<Address>();
@@ -53,6 +54,8 @@ export async function arkRun(
     if (await vault.isPaused()) return _logRunExit('vault is currently paused');
     if (await poolHasBadDebt(vault, _settings.maxAuctionAge))
       return _logRunExit('pool has bad debt');
+    if (await detectRecoverable(vault))
+      return _logRunExit('collateral detected, recovery required');
 
     const gas = await getGasWithBuffer('pool', 'updateInterest', [], await vault.getPoolAddress());
     const vaultAddress = vault.getAddress();

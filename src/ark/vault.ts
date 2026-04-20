@@ -69,9 +69,21 @@ export function createVault(address: Address, vaultAuthAddress?: Address) {
       vault().write.moveToBuffer([from, amount], { gas }),
     drain: (index: bigint) => vault().write.drain(index),
 
+    // vault — recovery
+    recoverCollateral: (indexes: bigint[], amts: bigint[], gas: bigint) =>
+      vault().write.recoverCollateral([indexes, amts], { gas }),
+    returnQuoteToken: (toIndex: bigint, amt: bigint, gas: bigint) =>
+      vault().write.returnQuoteToken([toIndex, amt], { gas }),
+    getRemovedCollateralValue: async (): Promise<bigint> =>
+      BigInt((await vault().read.removedCollateralValue()) as any),
+    getLpDust: async (): Promise<bigint> => BigInt((await vault().read.LP_DUST()) as any),
+    getAuthAddress: async (): Promise<Address> => (await vault().read.AUTH()) as Address,
+
     // vaultAuth
     getBufferRatio: () => vaultAuth().read.bufferRatio(),
     getMinBucketIndex: () => vaultAuth().read.minBucketIndex(),
+    getSwapper: async (): Promise<Address> => (await vaultAuth().read.swapper()) as Address,
+    isAuthPaused: async (): Promise<boolean> => (await vaultAuth().read.paused()) as boolean,
 
     // poolInfoUtils
     getPriceToIndex: async (price: bigint) => (await getPoolInfoUtils()).read.priceToIndex([price]),
@@ -82,9 +94,23 @@ export function createVault(address: Address, vaultAuthAddress?: Address) {
       (await getPoolInfoUtils()).read.auctionStatus(await getPoolAddr(), borrower),
     getBorrowFeeRate: async () =>
       (await getPoolInfoUtils()).read.borrowFeeRate(await getPoolAddr()),
+    lpToCollateral: async (bucket: bigint, lps: bigint): Promise<bigint> =>
+      BigInt(
+        (await (await getPoolInfoUtils()).read.lpToCollateral([await getPoolAddr(), lps, bucket])) as any,
+      ),
+    lpToQuoteTokens: async (bucket: bigint, lps: bigint): Promise<bigint> =>
+      BigInt(
+        (await (await getPoolInfoUtils()).read.lpToQuoteTokens([await getPoolAddr(), lps, bucket])) as any,
+      ),
 
     // pool
     getBucketInfo: async (index: bigint) => (await getPool()).read.bucketInfo([index]),
+    getCollateralAddress: async (): Promise<Address> =>
+      (await (await getPool()).read.collateralAddress()) as Address,
+    getVaultLps: async (bucket: bigint): Promise<bigint> => {
+      const info = await (await getPool()).read.lenderInfo([bucket, address]);
+      return BigInt((info as any)[0]);
+    },
     getBankruptcyTime: async (index: bigint) => {
       const bucketInfo = await (await getPool()).read.bucketInfo([index]);
       return (bucketInfo as any)[2];

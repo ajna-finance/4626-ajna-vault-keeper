@@ -7,6 +7,7 @@ import {VaultAuth} from "../../lib/4626-ajna-vault/src/VaultAuth.sol";
 import {MockVault} from "../mocks/contracts/MockVault.sol";
 import {MockVaultAuth} from "../mocks/contracts/MockVaultAuth.sol";
 import {MockChronicle} from "../mocks/contracts/MockChronicle.sol";
+import {MockPool} from "../mocks/contracts/MockPool.sol";
 import {IPool} from "ajna-core/interfaces/pool/IPool.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
@@ -34,9 +35,12 @@ contract DeployScript is Script, StdCheats {
             vaultAuth
         );
 
-        mockVaultAddress = address(new MockVault(address(0)));
+        address mockPoolAddress = address(new MockPool());
+        mockVaultAddress = address(new MockVault(mockPoolAddress));
         mockVaultAuthAddress = address(new MockVaultAuth());
         mockChronicleAddress = address(new MockChronicle());
+
+        MockVault(mockVaultAddress).setAuth(mockVaultAuthAddress);
 
         vaultAuth.setBufferRatio(5000);
         vaultAuth.setKeeper(deployerAddress, true);

@@ -519,10 +519,24 @@ export const vaultAbi = [
     name: 'recoverCollateral',
     stateMutability: 'nonpayable',
     inputs: [
-      { name: '_fromIndex', type: 'uint256' },
-      { name: '_amt', type: 'uint256' },
+      { name: '_fromIndexes', type: 'uint256[]' },
+      { name: '_amts', type: 'uint256[]' },
     ],
     outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'removedCollateralValue',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'AUTH',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
   },
   {
     type: 'function',

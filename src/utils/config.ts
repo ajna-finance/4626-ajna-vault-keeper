@@ -5,6 +5,13 @@ import { toAsset } from './decimalConversion.ts';
 
 // ============= Raw JSON Types =============
 
+type ArkRecoveryConfig = {
+  enabled?: boolean;
+  refillBucketOverride?: string;
+  maxSlippageBps?: number;
+  maxValueLossBps?: number;
+};
+
 type ArkConfig = {
   address: Address;
   vaultAddress: Address;
@@ -18,6 +25,7 @@ type ArkConfig = {
   minMoveAmount?: string;
   minTimeSinceBankruptcy?: number;
   maxAuctionAge?: number;
+  recovery?: ArkRecoveryConfig;
 };
 
 type RawConfig = {
@@ -57,6 +65,13 @@ type RawConfig = {
 
   remoteSigner?: {
     requestTimeoutMs?: number;
+  };
+
+  recovery?: {
+    dedupWindowMs?: number;
+    maxSlippageBps?: number;
+    maxValueLossBps?: number;
+    minLpMintedBps?: number;
   };
 
   arks: ArkConfig[];
@@ -189,6 +204,29 @@ if (!raw.arkGlobal.optimalBucketDiff) {
 if (!raw.minRateDiff) raw.minRateDiff = 10;
 if (!raw.quoteTokenAddress) throw new Error('config.json: quoteTokenAddress is required');
 
+raw.recovery ??= {};
+raw.recovery.dedupWindowMs ??= 3_600_000;
+raw.recovery.maxSlippageBps ??= 50;
+raw.recovery.maxValueLossBps ??= 100;
+raw.recovery.minLpMintedBps ??= 9900;
+
+const isBps = (n: number) => Number.isInteger(n) && n >= 0 && n <= 10000;
+if (!isBps(raw.recovery.maxSlippageBps))
+  throw new Error(`config.json: recovery.maxSlippageBps must be an integer 0-10000`);
+if (!isBps(raw.recovery.maxValueLossBps))
+  throw new Error(`config.json: recovery.maxValueLossBps must be an integer 0-10000`);
+if (!isBps(raw.recovery.minLpMintedBps))
+  throw new Error(`config.json: recovery.minLpMintedBps must be an integer 0-10000`);
+
+for (const [i, ark] of raw.arks.entries()) {
+  const r = ark.recovery;
+  if (r == null) continue;
+  if (r.maxSlippageBps != null && !isBps(r.maxSlippageBps))
+    throw new Error(`config.json: arks[${i}].recovery.maxSlippageBps must be an integer 0-10000`);
+  if (r.maxValueLossBps != null && !isBps(r.maxValueLossBps))
+    throw new Error(`config.json: arks[${i}].recovery.maxValueLossBps must be an integer 0-10000`);
+}
+
 // ============= Export =============
 
 export type ResolvedArkSettings = {
@@ -197,6 +235,16 @@ export type ResolvedArkSettings = {
   minMoveAmount: bigint;
   minTimeSinceBankruptcy: bigint;
   maxAuctionAge: number;
+};
+
+export type ResolvedRecoverySettings = {
+  enabled: boolean;
+  refillBucketOverride?: bigint;
+  maxSlippageBps: number;
+  maxValueLossBps: number;
+  minLpMintedBps: number;
+  minTimeSinceBankruptcy: bigint;
+  dedupWindowMs: number;
 };
 
 export function resolveArkSettings(ark: ArkConfig): ResolvedArkSettings {
@@ -211,12 +259,32 @@ export function resolveArkSettings(ark: ArkConfig): ResolvedArkSettings {
   };
 }
 
+export function resolveRecoverySettings(ark: ArkConfig): ResolvedRecoverySettings {
+  const g = raw.recovery!;
+  const r = ark.recovery ?? {};
+  const resolved: ResolvedRecoverySettings = {
+    enabled: r.enabled ?? true,
+    maxSlippageBps: r.maxSlippageBps ?? g.maxSlippageBps!,
+    maxValueLossBps: r.maxValueLossBps ?? g.maxValueLossBps!,
+    minLpMintedBps: g.minLpMintedBps!,
+    minTimeSinceBankruptcy: BigInt(
+      ark.minTimeSinceBankruptcy ?? raw.arkGlobal.minTimeSinceBankruptcy!,
+    ),
+    dedupWindowMs: g.dedupWindowMs!,
+  };
+  if (r.refillBucketOverride != null) {
+    resolved.refillBucketOverride = BigInt(r.refillBucketOverride);
+  }
+  return resolved;
+}
+
 export const config = {
   ...raw,
   keeper: raw.keeper as Required<RawConfig['keeper']>,
   oracle: raw.oracle as Required<RawConfig['oracle']>,
   arkGlobal: raw.arkGlobal as Required<RawConfig['arkGlobal']>,
   transaction: raw.transaction as Required<RawConfig['transaction']>,
+  recovery: raw.recovery as Required<NonNullable<RawConfig['recovery']>>,
   remoteSigner: raw.remoteSigner as Required<NonNullable<RawConfig['remoteSigner']>>,
   quoteTokenAddress: raw.quoteTokenAddress.toLowerCase() as Address,
   metavaultAddress: (raw.metavaultAddress || undefined) as Address | undefined,

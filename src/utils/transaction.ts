@@ -182,6 +182,48 @@ function getAmountMoved(receipt: any, action: string) {
   return amount;
 }
 
+export type RecoverCollateralLog = {
+  bucket: bigint;
+  gems: bigint;
+  lps: bigint;
+  value: bigint;
+};
+
+export type ReturnQuoteTokenLog = {
+  bucket: bigint;
+  amount: bigint;
+  lps: bigint;
+};
+
+export function parseRecoverCollateralLogs(receipt: TransactionReceipt): RecoverCollateralLog[] {
+  const logs = parseEventLogs({
+    abi: getAbi('vault'),
+    eventName: 'RecoverCollateral',
+    logs: receipt.logs,
+  }) as unknown as Array<{
+    args: { bucket: bigint; gems: bigint; lps: bigint; value: bigint };
+  }>;
+  return logs.map((l) => ({
+    bucket: l.args.bucket,
+    gems: l.args.gems,
+    lps: l.args.lps,
+    value: l.args.value,
+  }));
+}
+
+export function parseReturnQuoteTokenLog(
+  receipt: TransactionReceipt,
+): ReturnQuoteTokenLog | null {
+  const logs = parseEventLogs({
+    abi: getAbi('vault'),
+    eventName: 'ReturnQuoteToken',
+    logs: receipt.logs,
+  }) as unknown as Array<{ args: { bucket: bigint; amount: bigint; lps: bigint } }>;
+  if (logs.length === 0) return null;
+  const l = logs[0]!;
+  return { bucket: l.args.bucket, amount: l.args.amount, lps: l.args.lps };
+}
+
 function abridgedViemError(err: unknown) {
   const e = err as any;
   const data = getRevertData(err);

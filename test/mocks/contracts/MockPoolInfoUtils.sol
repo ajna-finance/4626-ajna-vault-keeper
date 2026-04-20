@@ -64,8 +64,18 @@ contract MockPoolInfoUtils {
     return _vault.priceToIndex(_price);
   }
 
+  mapping(uint256 => uint256) public mockLpToCollateral;
+
   function lpToQuoteTokens(address _pool, uint256 _lps, uint256 _index) public view returns (uint256) {
     return _vault.qts(_index);
+  }
+
+  function lpToCollateral(address _pool, uint256 _lps, uint256 _index) public view returns (uint256) {
+    return mockLpToCollateral[_index];
+  }
+
+  function setLpToCollateral(uint256 _index, uint256 _amount) public {
+    mockLpToCollateral[_index] = _amount;
   }
 
   function setLup(uint256 _price) public {

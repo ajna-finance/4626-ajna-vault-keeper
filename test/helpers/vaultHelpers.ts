@@ -37,7 +37,20 @@ const getPoolInfoUtils = async () => {
 export const setBufferRatio = (ratio: bigint) => vaultAuth().write.setBufferRatio([ratio]);
 export const setMinBucketIndex = (index: bigint) => vaultAuth().write.setMinBucketIndex([index]);
 
-export const setPaused = (status: boolean) => vault().write.setPaused(status);
+export const setAuthPaused = (status: boolean) => vaultAuth().write.setAuthPaused([status]);
+export const setRemovedCollateralValue = (v: bigint) =>
+  vault().write.setRemovedCollateralValue([v]);
+export const setLpDust = (d: bigint) => vault().write.setLpDust([d]);
+export const setVaultAuthRef = (auth: Address) => vault().write.setAuth([auth]);
+export const setCollateralToken = (addr: Address) => vault().write.setCollateralToken([addr]);
+export const setSwapper = (addr: Address) => vaultAuth().write.setSwapper([addr]);
+
+export const setLpToCollateral = async (index: bigint, amount: bigint) =>
+  (await getPoolInfoUtils()).write.setLpToCollateral([index, amount]);
+export const setLenderLps = async (index: bigint, lender: Address, lps: bigint) =>
+  (await getPool()).write.setLenderLps([index, lender, lps]);
+export const setPoolCollateralAddress = async (addr: Address) =>
+  (await getPool()).write.setCollateralAddress([addr]);
 
 const _setPrice = (price: bigint) => chronicle().write.setPrice(price);
 

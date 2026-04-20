@@ -24,6 +24,7 @@ contract DeployScript is Script, StdCheats {
         mockVaultAddress = address(new MockVault(mockPoolAddress));
         mockVaultAuthAddress = address(new MockVaultAuth());
         mockChronicleAddress = address(new MockChronicle());
+        MockVault(mockVaultAddress).setAuth(mockVaultAuthAddress);
         vm.stopBroadcast();
 
         string memory addresses = string.concat(

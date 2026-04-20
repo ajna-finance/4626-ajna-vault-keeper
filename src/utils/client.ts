@@ -8,7 +8,7 @@ import {
   type Chain,
 } from 'viem';
 import * as allChains from 'viem/chains';
-import { privateKeyToAccount } from 'viem/accounts';
+import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { Agent } from 'undici';
 import { credentialMode, env } from './env.ts';
 import { config } from './config.ts';
@@ -102,6 +102,14 @@ function setClients(account: Account): void {
   readOnlyClient = built.publicClient;
 }
 
+function createEphemeralReadOnlyAccount(): Account {
+  log.info(
+    { event: 'client_readonly_mode' },
+    'recovery-detect mode: using ephemeral key, no txs will be signed',
+  );
+  return privateKeyToAccount(generatePrivateKey());
+}
+
 function createImmediateAccount(): Account | null {
   if (credentialMode === 'privateKey') {
     return privateKeyToAccount(env.PRIVATE_KEY as `0x${string}`);
@@ -109,6 +117,10 @@ function createImmediateAccount(): Account | null {
 
   if (credentialMode === 'remoteSigner') {
     return createRemoteSignerAccount(buildRemoteSignerConfig());
+  }
+
+  if (env.BOT_MODE === 'recovery-detect' && credentialMode === undefined) {
+    return createEphemeralReadOnlyAccount();
   }
 
   return null;

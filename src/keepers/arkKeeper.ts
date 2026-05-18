@@ -14,8 +14,8 @@ const haltedArks = new Set<Address>();
 let vault: ReturnType<typeof createVault>;
 let _settings: ResolvedArkSettings;
 
-export function isHalted(): boolean {
-  return halted;
+export function isHalted(address?: Address): boolean {
+  return address === undefined ? haltedArks.size > 0 : isArkHalted(address);
 }
 
 // ============= Types =============

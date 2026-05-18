@@ -233,7 +233,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
   // If arkKeeper halted (e.g. LUPBelowHTP on a recoverCollateral tx), don't retry every
   // tick — the on-chain precondition won't change from under us and each attempt just
   // burns gas on the same revert.
-  if (isHalted()) {
+  if (isHalted(ark)) {
     log.warn(
       { event: 'recovery_skipped', reason: 'keeper_halted', ark },
       'recovery skipped: keeper halted',
@@ -908,4 +908,3 @@ export function getRecoveryTargets(): ArkTarget[] {
     settings: resolveRecoverySettings(ark),
   }));
 }
-

@@ -4,6 +4,7 @@ import { client } from '../utils/client';
 import { log } from '../utils/logger';
 import { createVault } from '../ark/vault';
 import { detectRecoverable, type RecoverableBucket } from '../ark/recovery';
+import { getChainTime, ChainTimeUnavailableError } from '../utils/chainTime';
 import { isHalted } from './arkKeeper';
 import {
   type SwapExecutor,
@@ -760,13 +761,34 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
       vault.getVaultLps(refillBucket),
     ]);
 
+  // bankruptcyTime is a chain timestamp, so the recency comparison must use chain
+  // time too — wall clock drifts from block time (and test chains manipulate it),
+  // which is why arkKeeper's bankruptcy gate uses getChainTime as well.
+  let nowSec: bigint;
+  try {
+    nowSec = await getChainTime();
+  } catch (err) {
+    if (!(err instanceof ChainTimeUnavailableError)) throw err;
+    log.error(
+      {
+        event: 'recovery_refill_failed',
+        reason: 'chain_time_unavailable',
+        ark,
+        refillBucket,
+        err: abridgedViemError(err),
+      },
+      'refill pre-check failed: chain time unavailable',
+    );
+    return false;
+  }
+
   const precheck = refillPrecheck({
     amountWad: walletQuoteBalFinalWad,
     vaultRefillLps,
     bucketLps: refillLps,
     bucketCollateral: refillCollateral,
     bankruptcyTime: refillBankruptcyTime,
-    nowSec: BigInt(Math.floor(Date.now() / 1000)),
+    nowSec,
     minTimeSinceBankruptcy: target.settings.minTimeSinceBankruptcy,
     lpDust,
     minLpMintedBps: target.settings.minLpMintedBps,

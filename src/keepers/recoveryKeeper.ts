@@ -162,11 +162,17 @@ export async function detectOnly(target: ArkTarget): Promise<void> {
   await withArkLock(target.vaultAddress, () => runDetectOnly(target));
 }
 
+// Returns true when the run needs no operator attention: either a clean no-op
+// (nothing recoverable) or a completed recovery. Every blocked/failed path returns
+// false so recovery-oneshot can exit non-zero instead of masking failure.
 export async function execute(
   target: ArkTarget,
   swapExecutor: SwapExecutor = new UnconfiguredSwapExecutor(),
-): Promise<void> {
-  await withArkLock(target.vaultAddress, () => runExecute(target, swapExecutor));
+): Promise<boolean> {
+  const result = await withArkLock(target.vaultAddress, () => runExecute(target, swapExecutor));
+  // A lock skip means another run is already executing this ark — nothing we can
+  // claim succeeded in THIS invocation, so report it as needing attention.
+  return result === true;
 }
 
 // ============= Detect mode =============
@@ -231,7 +237,7 @@ async function runDetectOnly(target: ArkTarget): Promise<void> {
 
 // ============= Execute mode =============
 
-async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promise<void> {
+async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promise<boolean> {
   const ark = target.vaultAddress;
   // If arkKeeper halted (e.g. LUPBelowHTP on a recoverCollateral tx), don't retry every
   // tick — the on-chain precondition won't change from under us and each attempt just
@@ -241,7 +247,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
       { event: 'recovery_skipped', reason: 'keeper_halted', ark },
       'recovery skipped: keeper halted',
     );
-    return;
+    return false;
   }
 
   const vault = createVault(target.vaultAddress, target.vaultAuthAddress);
@@ -263,7 +269,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
       },
       'recovery blocked: admin paused with rcv=0',
     );
-    return;
+    return false;
   }
 
   const collateralToken = await vault.getCollateralAddress();
@@ -286,7 +292,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
       },
       'swap executor unavailable; blocking recovery before any on-chain action',
     );
-    return;
+    return false;
   }
 
   // Fail fast if the loaded wallet isn't the on-chain swapper for this vault.
@@ -306,7 +312,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
       },
       'loaded wallet is not the on-chain swapper; aborting',
     );
-    return;
+    return false;
   }
   // Auth pointer drift: if the vault's on-chain AUTH differs from the vaultAuthAddress
   // in config, we may have been reading paused/swapper state from the wrong contract.
@@ -320,7 +326,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
       },
       'vault.AUTH() does not match config vaultAuthAddress; aborting',
     );
-    return;
+    return false;
   }
 
   // Dust thresholds — used by both the fresh-run contamination guard and the resume
@@ -363,7 +369,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
         },
         'swapper wallet has material pre-existing balance with rcv=0; operator must clear wallet before recovery',
       );
-      return;
+      return false;
     }
     if (entryCollateralBal > 0n || entryQuoteBal > 0n) {
       // Dedup dust warnings so we don't spam if operator hasn't swept yet. Uses a
@@ -400,7 +406,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
       includeQuoteEstimate: true,
       minValueWad: target.settings.minRecoveryValueWad,
     });
-    if (!candidates) return;
+    if (!candidates) return true;
 
     const evt = await buildRecoveryRequiredEvent(
       target,
@@ -448,13 +454,13 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
         },
         'rcv changed between preflight and recoverCollateral submission; another process may be recovering',
       );
-      return;
+      return false;
     }
     const receipt = await handleRecoveryTx(vault.recoverCollateral(indexes, amts, gas), {
       action: 'recoverCollateral',
       ark,
     });
-    if (!receipt) return;
+    if (!receipt) return false;
 
     const walletCollateralAfter = await balanceOf(collateralToken, wallet);
     const actualRecovered = walletCollateralAfter - walletCollateralBefore;
@@ -506,7 +512,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
         { event: 'recovery_state_mismatch', ark, stage },
         'operator attention required',
       );
-      return;
+      return false;
     }
   }
 
@@ -524,7 +530,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
       },
       'refillBucketOverride is below AUTH.minBucketIndex; would revert on-chain',
     );
-    return;
+    return false;
   }
 
   // The vault's rcv is the quote-denominated WAD value of the recovered collateral at
@@ -565,7 +571,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
         },
         'swap quote failed',
       );
-      return;
+      return false;
     }
     log.info(
       {
@@ -595,7 +601,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
         },
         'SwapExecutor.getSpender returned the bot wallet; self-approval is a no-op, adapter is misconfigured',
       );
-      return;
+      return false;
     }
     await approveExact(collateralToken, spender, walletCollateralBal);
 
@@ -614,7 +620,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
         },
         'swap execute failed',
       );
-      return;
+      return false;
     }
     const walletQuoteAfter = await balanceOf(quoteToken, wallet);
     const actualAmountOut = walletQuoteAfter - walletQuoteBefore;
@@ -637,7 +643,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
         },
         'swap output below vault-debt threshold, halting',
       );
-      return;
+      return false;
     }
 
     log.info(
@@ -680,7 +686,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
       },
       'refill bucket recently bankrupt',
     );
-    return;
+    return false;
   }
 
   // _validDestination in AjnaVaultLibrary reverts with BucketLPDangerous when
@@ -697,7 +703,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
       },
       'refill bucket LP in dangerous range (1 to 1_000_000); would revert BucketLPDangerous',
     );
-    return;
+    return false;
   }
 
   // Dust floor: when the bucket is empty, the deposit must clear LP_DUST (WAD).
@@ -714,7 +720,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
       },
       'refill amount below LP_DUST on empty bucket',
     );
-    return;
+    return false;
   }
 
   // Zero-quote guard: if Stage 2 was skipped (sub-dust collateral recovered) or the
@@ -731,7 +737,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
       },
       'wallet has no quote tokens to refill; rcv>0 but nothing to return, operator attention required',
     );
-    return;
+    return false;
   }
 
   // Bucket health proxy: only meaningful for pure-quote buckets. For a pure-quote
@@ -761,7 +767,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
           },
           'refill bucket health below minLpMintedBps threshold',
         );
-        return;
+        return false;
       }
     }
   }
@@ -806,7 +812,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
       },
       'returnQuoteToken reverted',
     );
-    return;
+    return false;
   }
 
   // Stage 4: reconcile and emit completion
@@ -831,6 +837,7 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
     },
     'recovery complete',
   );
+  return true;
 }
 
 // ============= Helpers =============

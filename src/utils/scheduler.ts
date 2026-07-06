@@ -36,7 +36,10 @@ async function runRecoveryDetect() {
   }
 }
 
-async function runRecoveryExecute() {
+// True only when every enabled ark ran without needing operator attention —
+// recovery-oneshot turns this into its process exit code.
+async function runRecoveryExecute(): Promise<boolean> {
+  let allOk = true;
   for (const target of getRecoveryTargets()) {
     if (!target.settings.enabled) {
       log.info(
@@ -45,11 +48,13 @@ async function runRecoveryExecute() {
       );
       continue;
     }
-    await recoveryExecute(target);
+    const ok = await recoveryExecute(target);
+    allOk &&= ok;
   }
+  return allOk;
 }
 
-async function runOnce() {
+async function runOnce(): Promise<boolean | void> {
   switch (env.BOT_MODE) {
     case 'scheduler':
       return runKeeperInterval();
@@ -83,13 +88,24 @@ export function startScheduler() {
 
   (async () => {
     if (isOneShot) {
+      let ok = false;
       try {
-        await runOnce();
+        ok = (await runOnce()) === true;
       } catch (e) {
         log.error({ event: 'keeper_run_failed', err: e }, 'recovery-oneshot run failed');
         process.exit(1);
+        return;
       }
-      process.exit(0);
+      if (!ok) {
+        log.error(
+          { event: 'recovery_oneshot_incomplete', mode: env.BOT_MODE },
+          'recovery-oneshot finished with at least one ark needing operator attention',
+        );
+      }
+      // Exit code carries the outcome: operator runbooks chain on it
+      // (`recovery-oneshot && resume`), so a swallowed failure must not exit 0.
+      process.exit(ok ? 0 : 1);
+      return;
     }
 
     while (!signal.aborted) {

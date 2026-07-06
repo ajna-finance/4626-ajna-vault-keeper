@@ -6,9 +6,12 @@ vi.mock('graphql-request', async () => {
 });
 
 import {
+  setAuthPaused,
   setLenderLps,
   setLpToCollateral,
+  setPoolCollateralAddress,
   setRemovedCollateralValue,
+  setSwapper,
 } from '../helpers/vaultHelpers';
 import {
   addOneBucket,
@@ -24,6 +27,8 @@ import {
   _resetDedupStoreForTests,
 } from '../../src/keepers/recoveryKeeper';
 import { createVault } from '../../src/ark/vault';
+import type { SwapExecutor } from '../../src/ark/swapExecutor';
+import { client } from '../../src/utils/client';
 import { config, resolveArkSettings, resolveRecoverySettings } from '../../src/utils/config';
 import { log } from '../../src/utils/logger';
 import { request } from 'graphql-request';
@@ -83,7 +88,8 @@ describe('recoveryKeeper execute mode: swap executor preflight', () => {
     await setLpToCollateral(bucket, 500n);
 
     // No executor argument: execute() falls back to UnconfiguredSwapExecutor.
-    await execute(target());
+    const ok = await execute(target());
+    expect(ok).toBe(false);
 
     const blocked = errorSpy.mock.calls.find(
       (c) => (c[0] as { event?: string })?.event === 'recovery_blocked_swap_executor',
@@ -98,5 +104,59 @@ describe('recoveryKeeper execute mode: swap executor preflight', () => {
     expect(started).toBeUndefined();
     const vault = createVault(vaultAddr(), authAddr());
     expect(await vault.getRemovedCollateralValue()).toBe(0n);
+  });
+});
+
+describe('recoveryKeeper execute mode: run outcome', () => {
+  useForkSnapshot();
+  useSubgraphMock(request);
+
+  // Configured-but-inert executor: lets preflight pass so the outcome of the rest
+  // of the run is observable. Tests that reach the swap stage are out of scope here.
+  const stubExecutor: SwapExecutor = {
+    getSpender: () => '0x00000000000000000000000000000000000000fe',
+    quoteExactIn: async () => {
+      throw new Error('stub executor: quote not expected in this test');
+    },
+    executeExactIn: async () => {
+      throw new Error('stub executor: execute not expected in this test');
+    },
+  };
+
+  const target = () => ({
+    vaultAddress: vaultAddr(),
+    vaultAuthAddress: authAddr(),
+    settings: testRecoverySettings,
+  });
+
+  beforeEach(() => {
+    _resetDedupStoreForTests();
+    _resetArkLocksForTests();
+  });
+
+  it('returns true for a clean no-op run (nothing recoverable)', async () => {
+    await setSwapper(client.account.address);
+    // The integration deploy leaves MockPool.collateralAddress unset; the
+    // contamination guard needs a real ERC20 to read balances from. The wallet
+    // holds no quote token in INTEGRATION mode, so pointing at it keeps the
+    // guard clean.
+    await setPoolCollateralAddress(config.quoteTokenAddress);
+
+    const ok = await execute(target(), stubExecutor);
+    expect(ok).toBe(true);
+  });
+
+  it('returns false when blocked by admin pause', async () => {
+    await setSwapper(client.account.address);
+    await setAuthPaused(true);
+
+    const ok = await execute(target(), stubExecutor);
+    expect(ok).toBe(false);
+  });
+
+  it('returns false when the loaded wallet is not the on-chain swapper', async () => {
+    // Default MockVaultAuth swapper is unset/zero — role check must fail.
+    const ok = await execute(target(), stubExecutor);
+    expect(ok).toBe(false);
   });
 });

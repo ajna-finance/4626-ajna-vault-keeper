@@ -132,3 +132,66 @@ describe('runKeeperInterval', () => {
     expect(arkRun).not.toHaveBeenCalled();
   });
 });
+
+describe('recovery-oneshot exit codes', () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.doUnmock('../../src/utils/env.ts');
+    vi.doUnmock('../../src/keepers/recoveryKeeper.ts');
+    vi.restoreAllMocks();
+  });
+
+  async function setupOneshot(executeResults: boolean[]) {
+    const log = { error: vi.fn(), info: vi.fn(), warn: vi.fn() };
+    const targets = executeResults.map((_, i) => ({
+      vaultAddress: `0x00000000000000000000000000000000000000a${i}` as Address,
+      vaultAuthAddress: `0x00000000000000000000000000000000000000b${i}` as Address,
+      settings: { enabled: true },
+    }));
+    const execute = vi.fn();
+    for (const result of executeResults) execute.mockResolvedValueOnce(result);
+
+    vi.doMock('../../src/utils/env.ts', () => ({ env: { BOT_MODE: 'recovery-oneshot' } }));
+    vi.doMock('../../src/utils/config.ts', () => ({
+      config: {
+        keeper: { intervalMs: 1 },
+        oracle: {},
+        transaction: { confirmations: 0 },
+        arks: [],
+      },
+      resolveArkSettings: vi.fn(),
+      resolveRecoverySettings: vi.fn(),
+    }));
+    vi.doMock('../../src/utils/logger.ts', () => ({ log }));
+    vi.doMock('../../src/keepers/metavaultKeeper.ts', () => ({ metavaultRun: vi.fn() }));
+    vi.doMock('../../src/keepers/arkKeeper.ts', () => ({ arkRun: vi.fn() }));
+    vi.doMock('../../src/keepers/recoveryKeeper.ts', () => ({
+      detectOnly: vi.fn(),
+      execute,
+      getRecoveryTargets: () => targets,
+    }));
+
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const { startScheduler } = await import('../../src/utils/scheduler.ts');
+    startScheduler();
+    return { exitSpy, execute, log };
+  }
+
+  it('exits 1 when any ark run reports failure', async () => {
+    const { exitSpy, execute, log } = await setupOneshot([true, false]);
+
+    await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(1));
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'recovery_oneshot_incomplete' }),
+      expect.any(String),
+    );
+  });
+
+  it('exits 0 when every ark run completes cleanly', async () => {
+    const { exitSpy, execute } = await setupOneshot([true, true]);
+
+    await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(0));
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+});

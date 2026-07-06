@@ -91,10 +91,18 @@ contract MockVault {
         require(!_authPaused(), 'MockVault: admin paused');
         require(_fromIndexes.length == _amts.length, 'MockVault: length mismatch');
         uint256 total = 0;
+        uint256 value = 0;
         for (uint256 i = 0; i < _fromIndexes.length; i++) {
             total += _amts[i];
+            // The real vault records rcv as the QUOTE-denominated WAD value of the
+            // removed collateral at the bucket's price (AjnaVaultLibrary:
+            // (_gems * _price) / WAD) — not the raw collateral amount. The keeper's
+            // value-loss guard treats rcv as the quote value the swap must produce,
+            // so the mock must price it the same way. Buckets must be registered via
+            // addBucket first (indexToPrice is 0 for unknown buckets).
+            value += (_amts[i] * indexToPrice[_fromIndexes[i]]) / 1e18;
         }
-        removedCollateralValue += total;
+        removedCollateralValue += value;
         if (collateralToken != address(0) && total > 0) {
             IMockCollateralToken(collateralToken).transfer(msg.sender, total);
         }

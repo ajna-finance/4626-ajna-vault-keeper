@@ -29,6 +29,8 @@ import {
 import { createVault } from '../../src/ark/vault';
 import type { SwapExecutor } from '../../src/ark/swapExecutor';
 import { client } from '../../src/utils/client';
+import { contract } from '../../src/utils/contract';
+import { waitForWrite } from '../helpers/transactions';
 import { config, resolveArkSettings, resolveRecoverySettings } from '../../src/utils/config';
 import { log } from '../../src/utils/logger';
 import { request } from 'graphql-request';
@@ -158,5 +160,31 @@ describe('recoveryKeeper execute mode: run outcome', () => {
     // Default MockVaultAuth swapper is unset/zero — role check must fail.
     const ok = await execute(target(), stubExecutor);
     expect(ok).toBe(false);
+  });
+});
+
+describe('MockVault rcv pricing (contract-truth regression)', () => {
+  useForkSnapshot();
+
+  it('records removedCollateralValue as the quote-WAD value at bucket price, not raw collateral', async () => {
+    // Price 2.0 makes raw-vs-priced distinguishable: the real vault records
+    // (gems * price) / WAD, so 500 raw collateral at price 2e18 must yield rcv
+    // 1000 — the pre-fix mock summed the raw amounts (500).
+    const bucketA = 4155n;
+    const bucketB = 4156n;
+    const vaultContract = contract('vault', vaultAddr())();
+    await waitForWrite(vaultContract.write.addBucket(bucketA, 2n * 10n ** 18n, 10n ** 18n));
+    await waitForWrite(vaultContract.write.addBucket(bucketB, 5n * 10n ** 17n, 10n ** 18n));
+
+    await waitForWrite(
+      vaultContract.write.recoverCollateral([
+        [bucketA, bucketB],
+        [500n, 1000n],
+      ]),
+    );
+
+    // 500 * 2.0 + 1000 * 0.5 = 1000 + 500 = 1500.
+    const vault = createVault(vaultAddr(), authAddr());
+    expect(await vault.getRemovedCollateralValue()).toBe(1500n);
   });
 });

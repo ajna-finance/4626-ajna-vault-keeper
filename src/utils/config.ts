@@ -11,6 +11,7 @@ type ArkRecoveryConfig = {
   refillBucketOverride?: string;
   maxSlippageBps?: number;
   maxValueLossBps?: number;
+  minRecoveryValueWad?: string;
 };
 
 type ArkConfig = {
@@ -75,6 +76,7 @@ type RawConfig = {
     maxValueLossBps?: number;
     minLpMintedBps?: number;
     swapDeadlineSec?: number;
+    minRecoveryValueWad?: string;
   };
 
   arks: ArkConfig[];
@@ -103,6 +105,11 @@ const DEFAULT_RECOVERY_MAX_SLIPPAGE_BPS = 50;
 const DEFAULT_RECOVERY_MAX_VALUE_LOSS_BPS = 100;
 const DEFAULT_RECOVERY_MIN_LP_MINTED_BPS = 9900;
 const DEFAULT_RECOVERY_SWAP_DEADLINE_SEC = 300;
+// Quote-WAD value below which vault-held collateral is ignored by detection: 1e15 WAD
+// = 0.001 quote token, the same "$0.001 blast radius" as QUOTE_DUST_DIVISOR in the
+// recovery keeper. Collateral must be worth more than this before arkKeeper halts or
+// recovery triggers — otherwise a permissionless 1-wei addCollateral griefs both.
+const DEFAULT_RECOVERY_MIN_VALUE_WAD = '1000000000000000';
 
 const PINO_LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
 
@@ -148,6 +155,9 @@ export type ResolvedArkSettings = {
   minMoveAmount: bigint;
   minTimeSinceBankruptcy: bigint;
   maxAuctionAge: number;
+  // Optional so test fixtures predating the recovery floor stay valid; the resolver
+  // always populates it, and detection treats absence as "no floor".
+  minRecoveryValueWad?: bigint;
 };
 
 export type ResolvedRecoverySettings = {
@@ -157,6 +167,7 @@ export type ResolvedRecoverySettings = {
   maxValueLossBps: number;
   minLpMintedBps: number;
   minTimeSinceBankruptcy: bigint;
+  minRecoveryValueWad: bigint;
   dedupWindowMs: number;
   swapDeadlineSec: number;
 };
@@ -170,6 +181,9 @@ export function resolveArkSettings(ark: ArkConfig): ResolvedArkSettings {
       ark.minTimeSinceBankruptcy ?? raw.arkGlobal.minTimeSinceBankruptcy!,
     ),
     maxAuctionAge: ark.maxAuctionAge ?? raw.arkGlobal.maxAuctionAge!,
+    minRecoveryValueWad: BigInt(
+      ark.recovery?.minRecoveryValueWad ?? raw.recovery!.minRecoveryValueWad!,
+    ),
   };
 }
 
@@ -184,6 +198,7 @@ export function resolveRecoverySettings(ark: ArkConfig): ResolvedRecoverySetting
     minTimeSinceBankruptcy: BigInt(
       ark.minTimeSinceBankruptcy ?? raw.arkGlobal.minTimeSinceBankruptcy!,
     ),
+    minRecoveryValueWad: BigInt(r.minRecoveryValueWad ?? g.minRecoveryValueWad!),
     dedupWindowMs: g.dedupWindowMs!,
     swapDeadlineSec: g.swapDeadlineSec!,
   };
@@ -541,12 +556,16 @@ function validateRecovery(c: RawConfig): void {
       { detail: 'must be an integer in [60, 3600] seconds' },
     );
   }
+  if (c.recovery.minRecoveryValueWad !== undefined) {
+    requireNonNegativeBigIntString(c.recovery.minRecoveryValueWad, 'recovery.minRecoveryValueWad');
+  }
 
   c.recovery.dedupWindowMs ??= DEFAULT_RECOVERY_DEDUP_WINDOW_MS;
   c.recovery.maxSlippageBps ??= DEFAULT_RECOVERY_MAX_SLIPPAGE_BPS;
   c.recovery.maxValueLossBps ??= DEFAULT_RECOVERY_MAX_VALUE_LOSS_BPS;
   c.recovery.minLpMintedBps ??= DEFAULT_RECOVERY_MIN_LP_MINTED_BPS;
   c.recovery.swapDeadlineSec ??= DEFAULT_RECOVERY_SWAP_DEADLINE_SEC;
+  c.recovery.minRecoveryValueWad ??= DEFAULT_RECOVERY_MIN_VALUE_WAD;
 
   for (const [i, ark] of c.arks.entries()) {
     const r = ark.recovery;
@@ -579,6 +598,9 @@ function validateRecovery(c: RawConfig): void {
           `${at}.refillBucketOverride must be a valid Ajna bucket index (0-${AJNA_MAX_FENWICK_INDEX})`,
         );
       }
+    }
+    if (r.minRecoveryValueWad != null) {
+      requireNonNegativeBigIntString(r.minRecoveryValueWad, `${at}.minRecoveryValueWad`);
     }
   }
 }

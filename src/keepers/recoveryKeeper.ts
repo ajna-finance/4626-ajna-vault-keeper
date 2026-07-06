@@ -210,7 +210,10 @@ async function runDetectOnly(target: ArkTarget): Promise<void> {
     return;
   }
 
-  const candidates = await detectRecoverable(vault, { includeQuoteEstimate: true });
+  const candidates = await detectRecoverable(vault, {
+    includeQuoteEstimate: true,
+    minValueWad: target.settings.minRecoveryValueWad,
+  });
   if (!candidates) return;
 
   const evt = await buildRecoveryRequiredEvent(
@@ -393,7 +396,10 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
 
   // Stage 1: recoverCollateral (if fresh run, rcv == 0)
   if (rcv === 0n) {
-    const candidates = await detectRecoverable(vault, { includeQuoteEstimate: true });
+    const candidates = await detectRecoverable(vault, {
+      includeQuoteEstimate: true,
+      minValueWad: target.settings.minRecoveryValueWad,
+    });
     if (!candidates) return;
 
     const evt = await buildRecoveryRequiredEvent(

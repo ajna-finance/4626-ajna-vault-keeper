@@ -9,9 +9,11 @@ export type RecoverableBucket = {
 
 type Vault = ReturnType<typeof createVault>;
 
+const WAD = 10n ** 18n;
+
 export async function detectRecoverable(
   vault: Vault,
-  opts?: { includeQuoteEstimate?: boolean },
+  opts?: { includeQuoteEstimate?: boolean; minValueWad?: bigint | undefined },
 ): Promise<RecoverableBucket[] | null> {
   const buckets = (await vault.getBuckets()) as readonly bigint[];
   if (buckets.length === 0) return null;
@@ -47,6 +49,22 @@ export async function detectRecoverable(
       candidates.push(entry);
     }
   }
+  if (candidates.length === 0) return null;
 
-  return candidates.length > 0 ? candidates : null;
+  // Materiality floor: anyone can permissionlessly addCollateral 1 wei into a bucket
+  // where the vault holds LP, which would otherwise halt arkKeeper every tick and walk
+  // recovery-auto into a paused-vault dead end (sub-dust collateral recovers, the swap
+  // is skipped, and rcv>0 strands the vault). Value candidates at their bucket price
+  // (the same price recoverCollateral itself uses for rcv) and ignore ones below the
+  // configured quote-WAD floor.
+  const minValueWad = opts?.minValueWad ?? 0n;
+  if (minValueWad === 0n) return candidates;
+
+  const prices = await Promise.all(candidates.map((c) => vault.getIndexToPrice(c.index)));
+  const material = candidates.filter((c, i) => {
+    const valueWad = (c.estimatedCollateralWad * (prices[i]! as bigint)) / WAD;
+    return valueWad >= minValueWad;
+  });
+
+  return material.length > 0 ? material : null;
 }

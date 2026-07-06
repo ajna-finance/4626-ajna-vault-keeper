@@ -61,7 +61,7 @@ export async function arkRun(
     if (isCurrentArkHalted()) return abortRun('keeper halted');
     if (await vault.isPaused()) return abortRun('vault is currently paused');
     if (await poolHasBadDebt(vault, _settings.maxAuctionAge)) return abortRun('pool has bad debt');
-    if (await detectRecoverable(vault))
+    if (await detectRecoverable(vault, { minValueWad: _settings.minRecoveryValueWad }))
       return abortRun('collateral detected, recovery required');
 
     const gas = await getGasWithBuffer('pool', 'updateInterest', [], await vault.getPoolAddress());

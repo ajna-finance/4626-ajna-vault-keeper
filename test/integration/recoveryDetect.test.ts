@@ -106,4 +106,33 @@ describe('recoveryKeeper detect mode', () => {
     );
     expect(collateralAlert).toBeUndefined();
   });
+
+  it('ignores collateral valued below minRecoveryValueWad', async () => {
+    // addOneBucket prices the bucket at 1.0 WAD, so 500 wei of collateral is worth
+    // exactly 500 quote-wei — below a 1000-wei floor, at/above a 500-wei floor.
+    const bucket = 4155n;
+    await addOneBucket(bucket);
+    await setLenderLps(bucket, vaultAddr(), 1000n);
+    await setLpToCollateral(bucket, 500n);
+
+    const floored = {
+      ...target(),
+      settings: { ...testRecoverySettings, minRecoveryValueWad: 1000n },
+    };
+    await detectOnly(floored);
+    let emitted = logSpy.mock.calls.find(
+      (c) => (c[0] as { event?: string })?.event === 'collateral_recovery_required',
+    );
+    expect(emitted).toBeUndefined();
+
+    const atFloor = {
+      ...target(),
+      settings: { ...testRecoverySettings, minRecoveryValueWad: 500n },
+    };
+    await detectOnly(atFloor);
+    emitted = logSpy.mock.calls.find(
+      (c) => (c[0] as { event?: string })?.event === 'collateral_recovery_required',
+    );
+    expect(emitted).toBeDefined();
+  });
 });

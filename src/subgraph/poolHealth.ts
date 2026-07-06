@@ -2,6 +2,7 @@ import { gql, request } from 'graphql-request';
 import { env } from '../utils/env.ts';
 import { config } from '../utils/config.ts';
 import { log } from '../utils/logger.ts';
+import { getChainTime } from '../utils/chainTime.ts';
 import type { Address } from 'viem';
 
 type GetUnsettledAuctionsResponse = {
@@ -13,26 +14,37 @@ type LiquidationAuction = {
   kickTime: string;
 };
 
+const AUCTION_PAGE_SIZE = 1000;
+
 type VaultLike = {
   getAddress: () => Address | undefined;
   getPoolAddress: () => Promise<Address>;
   getAuctionStatus: (borrower: Address) => Promise<readonly [bigint, bigint, bigint, ...unknown[]]>;
 };
 
+export class SubgraphUnavailableError extends Error {
+  constructor(cause?: unknown) {
+    super('subgraph query failed in fail-closed mode', { cause });
+    this.name = 'SubgraphUnavailableError';
+  }
+}
+
 export async function poolHasBadDebt(vault: VaultLike, maxAuctionAge?: number): Promise<boolean> {
-  const unfilteredAuctions = await _getUnsettledAuctions(vault);
-  if (unfilteredAuctions === 'error') return true;
-  const auctionsBeforeCutoff = _filterAuctions(
-    unfilteredAuctions as GetUnsettledAuctionsResponse,
-    maxAuctionAge,
-  );
+  const auctions = await _getUnsettledAuctions(vault);
+  const nowSec = await getChainTime();
 
-  for (let i = 0; i < auctionsBeforeCutoff.length; i++) {
+  for (let i = 0; i < auctions.liquidationAuctions.length; i++) {
+    const borrower = auctions.liquidationAuctions[i]!.borrower;
     const [kickTime, collateralRemaining, debtRemaining] = await vault.getAuctionStatus(
-      auctionsBeforeCutoff[i]!.borrower as Address,
+      borrower as Address,
     );
+    const activeDebtAuction = kickTime !== 0n && debtRemaining > 0n;
 
-    if (kickTime !== 0n && debtRemaining > 0n && collateralRemaining === 0n) return true;
+    if (
+      activeDebtAuction &&
+      (collateralRemaining === 0n || isPastAuctionAge(kickTime, nowSec, maxAuctionAge))
+    )
+      return true;
   }
 
   return false;
@@ -40,54 +52,74 @@ export async function poolHasBadDebt(vault: VaultLike, maxAuctionAge?: number): 
 
 export async function _getUnsettledAuctions(
   vault: VaultLike,
-): Promise<GetUnsettledAuctionsResponse | string> {
+): Promise<GetUnsettledAuctionsResponse> {
   try {
     const poolAddress = (await vault.getPoolAddress()).toLowerCase();
     const subgraphUrl = env.SUBGRAPH_URL;
 
     const query = gql`
-      query GetUnsettledAuctions($poolId: String!) {
-        liquidationAuctions(where: { pool: $poolId, settled: false }) {
+      query GetUnsettledAuctions($poolId: String!, $first: Int!, $skip: Int!) {
+        liquidationAuctions(
+          first: $first
+          skip: $skip
+          orderBy: id
+          orderDirection: asc
+          where: { pool: $poolId, settled: false }
+        ) {
           borrower
           kickTime
         }
       }
     `;
 
-    const result: GetUnsettledAuctionsResponse = await request(subgraphUrl!, query, {
-      poolId: poolAddress,
-    });
+    const liquidationAuctions: LiquidationAuction[] = [];
+    let skip = 0;
 
-    return result;
+    while (true) {
+      const result = await request<GetUnsettledAuctionsResponse>(subgraphUrl!, query, {
+        poolId: poolAddress,
+        first: AUCTION_PAGE_SIZE,
+        skip,
+      });
+
+      liquidationAuctions.push(...result.liquidationAuctions);
+
+      if (result.liquidationAuctions.length < AUCTION_PAGE_SIZE) break;
+      skip += AUCTION_PAGE_SIZE;
+    }
+
+    return { liquidationAuctions };
   } catch (err) {
     log.error(
-      { event: 'subgraph_query_failed', url: env.SUBGRAPH_URL, ark: vault.getAddress(), err },
+      {
+        event: 'subgraph_query_failed',
+        subgraphOrigin: safeOrigin(env.SUBGRAPH_URL),
+        ark: vault.getAddress(),
+        err,
+      },
       'subgraph query failed',
     );
 
-    return config.keeper.exitOnSubgraphFailure ? 'error' : { liquidationAuctions: [] };
+    if (config.keeper.exitOnSubgraphFailure) throw new SubgraphUnavailableError(err);
+    return { liquidationAuctions: [] };
   }
 }
 
-export function _filterAuctions(
-  response: GetUnsettledAuctionsResponse,
-  maxAuctionAge?: number,
-): LiquidationAuction[] {
-  const unsettledAuctions = response.liquidationAuctions;
-  const maxAge = maxAuctionAge ?? config.arkGlobal.maxAuctionAge;
-
-  if (maxAge === 0) return unsettledAuctions;
-
-  let auctionsBeforeCutoff: LiquidationAuction[] = [];
-
-  for (let i = 0; i < unsettledAuctions.length; i++) {
-    const kickTime = Number(unsettledAuctions[i]!.kickTime);
-    const auctionAge = Math.floor(Date.now() / 1000) - kickTime;
-
-    if (auctionAge > maxAge) {
-      auctionsBeforeCutoff.push(unsettledAuctions[i]!);
-    }
+function safeOrigin(rawUrl: string | undefined): string | undefined {
+  if (!rawUrl) return undefined;
+  try {
+    return new URL(rawUrl).origin;
+  } catch {
+    return undefined;
   }
+}
 
-  return auctionsBeforeCutoff;
+export function isPastAuctionAge(
+  kickTime: bigint,
+  nowSec: bigint,
+  maxAuctionAge?: number,
+): boolean {
+  const maxAge = maxAuctionAge ?? config.arkGlobal.maxAuctionAge;
+  if (maxAge === 0) return true;
+  return nowSec - kickTime > BigInt(maxAge);
 }

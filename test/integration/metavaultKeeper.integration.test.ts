@@ -1,17 +1,29 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import { metavaultRun } from '../../src/keepers/metavaultKeeper';
+import { ACCRUAL_PAD_BPS } from '../../src/metavault/planner';
+import { arkRun } from '../../src/keepers/arkKeeper';
 import {
   getExpectedSupplyAssets,
   getTotalExpectedSupplyAssets,
 } from '../../src/metavault/metavault';
-import { config } from '../../src/utils/config';
+import { config, resolveArkSettings } from '../../src/utils/config';
 import { client } from '../../src/utils/client';
 import { contract } from '../../src/utils/contract';
 import { type Address } from 'viem';
+import { waitForWrite } from '../helpers/transactions';
+
+// Tolerance large enough to absorb the accrual pad's slack across all configured strategies
+// (decreasing targets ask Euler to withdraw slightly less than what was prepared, so the buffer
+// ends up below its nominal target by up to pad * num_strategies).
+const padAwareTolerance = (totalAssets: bigint): bigint => {
+  const strategies = BigInt(config.arks.length + 1);
+  return (totalAssets * ACCRUAL_PAD_BPS * strategies * 3n) / 10000n + 1n;
+};
 
 vi.mock('../../src/subgraph/poolHealth.ts', () => ({
   poolHasBadDebt: vi.fn().mockResolvedValue(false),
+  SubgraphUnavailableError: class extends Error {},
 }));
 
 describe('metavault keeper run', () => {
@@ -86,7 +98,7 @@ describe('metavault keeper run', () => {
     await metavaultRun();
     const afterSecondRun = await getBalances();
 
-    const tolerance = afterFirstRun.totalAssets / 1_000_000n || 1n;
+    const tolerance = padAwareTolerance(afterFirstRun.totalAssets);
 
     const bufferDiff =
       afterSecondRun.bufferBalance > afterFirstRun.bufferBalance
@@ -132,13 +144,13 @@ describe('metavault keeper run', () => {
     // Pause the first ark
     const arkAuthAddress = process.env.ARK_AUTH_1_ADDRESS as Address;
     const arkAuth = contract('vaultAuth', arkAuthAddress);
-    await arkAuth().write.pause();
+    await waitForWrite(arkAuth().write.pause());
 
     // Second run should be a no-op (early return due to paused ark)
     await metavaultRun();
 
     // Unpause and verify nothing changed
-    await arkAuth().write.unpause();
+    await waitForWrite(arkAuth().write.unpause());
     const afterSecondRun = await getBalances();
 
     const tolerance = afterFirstRun.totalAssets / 1_000_000n || 1n;
@@ -172,13 +184,15 @@ describe('metavault keeper run', () => {
         outputs: [{ name: '', type: 'bool' }],
       },
     ];
-    await client.writeContract({
-      address: quoteTokenAddress,
-      abi: erc20ApproveAbi,
-      functionName: 'approve',
-      args: [config.metavaultAddress as Address, depositAmount],
-    });
-    await metavault().write.deposit([depositAmount, client.account.address]);
+    await waitForWrite(
+      client.writeContract({
+        address: quoteTokenAddress,
+        abi: erc20ApproveAbi,
+        functionName: 'approve',
+        args: [config.metavaultAddress as Address, depositAmount],
+      }),
+    );
+    await waitForWrite(metavault().write.deposit([depositAmount, client.account.address]));
 
     const afterDeposit = await getBalances();
     expect(afterDeposit.totalAssets).toBeGreaterThan(afterFirstRun.totalAssets);
@@ -187,7 +201,7 @@ describe('metavault keeper run', () => {
     await metavaultRun();
     const afterSecondRun = await getBalances();
 
-    const tolerance = afterSecondRun.totalAssets / 1_000_000n || 1n;
+    const tolerance = padAwareTolerance(afterSecondRun.totalAssets);
 
     // Buffer should be back near its target
     const bufferTarget = (afterSecondRun.totalAssets * BigInt(config.buffer.allocation)) / 100n;
@@ -224,16 +238,20 @@ describe('metavault keeper run', () => {
   it('rebalances after a withdrawal reduces total assets', async () => {
     // First run distributes funds to arks
     await metavaultRun();
+    // Mirror scheduler.ts: ark keepers move freshly-deposited buffer funds into buckets, so the
+    // next metavault run sees per-ark bucket liquidity (the operational invariant the strict
+    // bucket-coverage check relies on).
+    for (const ark of config.arks) {
+      await arkRun(ark.vaultAddress, ark.vaultAuthAddress, resolveArkSettings(ark));
+    }
     const afterFirstRun = await getBalances();
 
     // Withdraw from the metavault to reduce total assets, making arks overweight
     const metavault = contract('metavault');
     const withdrawAmount = 100n * 10n ** 18n;
-    await metavault().write.withdraw([
-      withdrawAmount,
-      client.account.address,
-      client.account.address,
-    ]);
+    await waitForWrite(
+      metavault().write.withdraw([withdrawAmount, client.account.address, client.account.address]),
+    );
 
     const afterWithdraw = await getBalances();
     expect(afterWithdraw.totalAssets).toBeLessThan(afterFirstRun.totalAssets);
@@ -242,7 +260,7 @@ describe('metavault keeper run', () => {
     await metavaultRun();
     const afterSecondRun = await getBalances();
 
-    const tolerance = afterSecondRun.totalAssets / 1_000_000n || 1n;
+    const tolerance = padAwareTolerance(afterSecondRun.totalAssets);
 
     // Buffer should be near target for the new total
     const bufferTarget = (afterSecondRun.totalAssets * BigInt(config.buffer.allocation)) / 100n;
@@ -272,7 +290,7 @@ describe('metavault keeper run', () => {
     // Pause ark 1 before the first run
     const arkAuthAddress = process.env.ARK_AUTH_1_ADDRESS as Address;
     const arkAuth = contract('vaultAuth', arkAuthAddress);
-    await arkAuth().write.pause();
+    await waitForWrite(arkAuth().write.pause());
 
     // Run with ark 1 paused — it should be excluded
     await metavaultRun();
@@ -282,7 +300,7 @@ describe('metavault keeper run', () => {
     expect(whilePaused.arkBalances[0]!).toBe(0n);
 
     // Unpause ark 1
-    await arkAuth().write.unpause();
+    await waitForWrite(arkAuth().write.unpause());
 
     // Run again — should now include ark 1 in rebalancing
     await metavaultRun();

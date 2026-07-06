@@ -1,10 +1,8 @@
 import { contract } from '../utils/contract.ts';
 import { type Address } from 'viem';
+import { type MarketAllocation } from './planner.ts';
 
-export type MarketAllocation = {
-  id: Address;
-  assets: bigint;
-};
+export type { MarketAllocation } from './planner.ts';
 
 const metavault = contract('metavault');
 

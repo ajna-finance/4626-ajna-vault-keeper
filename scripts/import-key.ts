@@ -56,7 +56,19 @@ async function main() {
   console.error('\nEncrypting private key (this may take a moment)...');
   const keystore = encryptKeystore(privateKey, password);
 
-  await writeKeystoreFile(resolvedPath, keystore);
+  try {
+    await writeKeystoreFile(resolvedPath, keystore);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
+      throw err;
+    }
+    const answer = await prompt(`File exists at ${resolvedPath}. Overwrite? (y/N): `);
+    if (!/^y(es)?$/i.test(answer.trim())) {
+      console.error('Aborted: existing keystore was not modified.');
+      process.exit(1);
+    }
+    await writeKeystoreFile(resolvedPath, keystore, { overwrite: true });
+  }
 
   console.error(`\nKeystore file written to: ${resolvedPath}`);
   console.error(`Address: 0x${keystore.address}`);

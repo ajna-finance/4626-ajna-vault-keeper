@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { join } from 'node:path';
-import { readFile, rm, stat } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import {
   encryptKeystore,
   decryptKeystore,
@@ -73,6 +73,134 @@ describe('decryptKeystore', () => {
     expect(() => decryptKeystore(ks, TEST_PASSWORD)).toThrow('Unsupported KDF: pbkdf2');
   });
 
+  it('throws on unsupported cipher before any decryption is attempted', () => {
+    const ks = encryptKeystore(TEST_KEY, TEST_PASSWORD);
+    ks.crypto.cipher = 'aes-256-ctr';
+
+    expect(() => decryptKeystore(ks, TEST_PASSWORD)).toThrow('Unsupported cipher: aes-256-ctr');
+  });
+
+  it('throws on unexpected dklen', () => {
+    const ks = encryptKeystore(TEST_KEY, TEST_PASSWORD);
+    ks.crypto.kdfparams.dklen = 16;
+
+    expect(() => decryptKeystore(ks, TEST_PASSWORD)).toThrow(/Unsupported scrypt dklen: 16/);
+  });
+
+  it('throws on scrypt N below the supported minimum', () => {
+    const ks = encryptKeystore(TEST_KEY, TEST_PASSWORD);
+    ks.crypto.kdfparams.n = 512;
+
+    expect(() => decryptKeystore(ks, TEST_PASSWORD)).toThrow('Unsupported scrypt N: 512');
+  });
+
+  it('throws on scrypt N above the supported maximum', () => {
+    const ks = encryptKeystore(TEST_KEY, TEST_PASSWORD);
+    ks.crypto.kdfparams.n = 1 << 22;
+
+    expect(() => decryptKeystore(ks, TEST_PASSWORD)).toThrow(/Unsupported scrypt N/);
+  });
+
+  it('throws on scrypt N that is not a power of two', () => {
+    const ks = encryptKeystore(TEST_KEY, TEST_PASSWORD);
+    ks.crypto.kdfparams.n = 200000;
+
+    expect(() => decryptKeystore(ks, TEST_PASSWORD)).toThrow('Unsupported scrypt N: 200000');
+  });
+
+  it('throws on scrypt r above the supported maximum', () => {
+    const ks = encryptKeystore(TEST_KEY, TEST_PASSWORD);
+    ks.crypto.kdfparams.r = 64;
+
+    expect(() => decryptKeystore(ks, TEST_PASSWORD)).toThrow('Unsupported scrypt r: 64');
+  });
+
+  it('throws on scrypt p above the supported maximum', () => {
+    const ks = encryptKeystore(TEST_KEY, TEST_PASSWORD);
+    ks.crypto.kdfparams.p = 64;
+
+    expect(() => decryptKeystore(ks, TEST_PASSWORD)).toThrow('Unsupported scrypt p: 64');
+  });
+
+  it('throws on non-integer scrypt parameters', () => {
+    const ks = encryptKeystore(TEST_KEY, TEST_PASSWORD);
+    ks.crypto.kdfparams.r = 1.5;
+
+    expect(() => decryptKeystore(ks, TEST_PASSWORD)).toThrow('Unsupported scrypt r: 1.5');
+  });
+
+  it('throws on negative scrypt parameters', () => {
+    const ks = encryptKeystore(TEST_KEY, TEST_PASSWORD);
+    ks.crypto.kdfparams.n = -262144;
+
+    expect(() => decryptKeystore(ks, TEST_PASSWORD)).toThrow('Unsupported scrypt N: -262144');
+  });
+
+  it('throws on zero scrypt N', () => {
+    const ks = encryptKeystore(TEST_KEY, TEST_PASSWORD);
+    ks.crypto.kdfparams.n = 0;
+
+    expect(() => decryptKeystore(ks, TEST_PASSWORD)).toThrow('Unsupported scrypt N: 0');
+  });
+
+  it('throws on missing scrypt parameters', () => {
+    const ks = encryptKeystore(TEST_KEY, TEST_PASSWORD);
+    delete (ks.crypto.kdfparams as Partial<typeof ks.crypto.kdfparams>).n;
+
+    expect(() => decryptKeystore(ks, TEST_PASSWORD)).toThrow('Unsupported scrypt N: undefined');
+  });
+
+  it('throws on non-numeric scrypt parameters', () => {
+    const ks = encryptKeystore(TEST_KEY, TEST_PASSWORD);
+    (ks.crypto.kdfparams as { p: unknown }).p = '1';
+
+    expect(() => decryptKeystore(ks, TEST_PASSWORD)).toThrow('Unsupported scrypt p: 1');
+  });
+
+  it('throws on salt shorter than the minimum', () => {
+    const ks = encryptKeystore(TEST_KEY, TEST_PASSWORD);
+    ks.crypto.kdfparams.salt = '00'.repeat(8);
+
+    expect(() => decryptKeystore(ks, TEST_PASSWORD)).toThrow(/Unsupported scrypt salt length: 8/);
+  });
+
+  it('throws on salt longer than the maximum', () => {
+    const ks = encryptKeystore(TEST_KEY, TEST_PASSWORD);
+    ks.crypto.kdfparams.salt = '00'.repeat(128);
+
+    expect(() => decryptKeystore(ks, TEST_PASSWORD)).toThrow(/Unsupported scrypt salt length: 128/);
+  });
+
+  it('throws on odd-length hex salt', () => {
+    const ks = encryptKeystore(TEST_KEY, TEST_PASSWORD);
+    ks.crypto.kdfparams.salt = '0'.repeat(33);
+
+    expect(() => decryptKeystore(ks, TEST_PASSWORD)).toThrow('Invalid scrypt salt encoding');
+  });
+
+  it('throws on non-hex salt', () => {
+    const ks = encryptKeystore(TEST_KEY, TEST_PASSWORD);
+    ks.crypto.kdfparams.salt = 'not-hex-data-not-hex-data-not-h!';
+
+    expect(() => decryptKeystore(ks, TEST_PASSWORD)).toThrow('Invalid scrypt salt encoding');
+  });
+
+  it('throws on cipher IV with wrong length', () => {
+    const ks = encryptKeystore(TEST_KEY, TEST_PASSWORD);
+    ks.crypto.cipherparams.iv = '00'.repeat(8);
+
+    expect(() => decryptKeystore(ks, TEST_PASSWORD)).toThrow(
+      'Invalid cipher IV: expected 16 bytes',
+    );
+  });
+
+  it('throws on non-hex ciphertext', () => {
+    const ks = encryptKeystore(TEST_KEY, TEST_PASSWORD);
+    ks.crypto.ciphertext = 'zz'.repeat(16);
+
+    expect(() => decryptKeystore(ks, TEST_PASSWORD)).toThrow('Invalid ciphertext encoding');
+  });
+
   it('round-trips correctly with multiple different keys', () => {
     const keys = [
       '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
@@ -117,5 +245,47 @@ describe('file I/O', () => {
     const content = await readFile(filePath, 'utf-8');
     const parsed = JSON.parse(content);
     expect(parsed.version).toBe(3);
+  });
+
+  it('refuses to overwrite an existing file by default', async () => {
+    const ks = encryptKeystore(TEST_KEY, TEST_PASSWORD);
+    const filePath = join(TMP_DIR, 'no-clobber.json');
+
+    await writeKeystoreFile(filePath, ks);
+
+    await expect(writeKeystoreFile(filePath, ks)).rejects.toMatchObject({ code: 'EEXIST' });
+  });
+
+  it('overwrites and tightens permissions on an existing 0o644 file when overwrite is true', async () => {
+    const ks = encryptKeystore(TEST_KEY, TEST_PASSWORD);
+    const filePath = join(TMP_DIR, 'permissive.json');
+
+    await mkdir(TMP_DIR, { recursive: true });
+    await writeFile(filePath, '{}\n', { mode: 0o644 });
+    await chmod(filePath, 0o644);
+    const before = await stat(filePath);
+    expect(before.mode & 0o777).toBe(0o644);
+
+    await writeKeystoreFile(filePath, ks, { overwrite: true });
+
+    const after = await stat(filePath);
+    expect(after.mode & 0o777).toBe(0o600);
+
+    const loaded = await readKeystoreFile(filePath);
+    expect(decryptKeystore(loaded, TEST_PASSWORD)).toBe(TEST_KEY);
+  });
+
+  it('overwrites at default 0o600 permissions when overwrite is true', async () => {
+    const ks1 = encryptKeystore(TEST_KEY, TEST_PASSWORD);
+    const ks2 = encryptKeystore(TEST_KEY, 'a-different-password');
+    const filePath = join(TMP_DIR, 'overwrite-tight.json');
+
+    await writeKeystoreFile(filePath, ks1);
+    await writeKeystoreFile(filePath, ks2, { overwrite: true });
+
+    const stats = await stat(filePath);
+    expect(stats.mode & 0o777).toBe(0o600);
+    const loaded = await readKeystoreFile(filePath);
+    expect(decryptKeystore(loaded, 'a-different-password')).toBe(TEST_KEY);
   });
 });

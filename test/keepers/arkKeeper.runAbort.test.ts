@@ -17,6 +17,8 @@ function buildVault(address: Address) {
     moveToBuffer: vi.fn().mockResolvedValue(TX_HASH),
     moveFromBuffer: vi.fn().mockResolvedValue(TX_HASH),
     getBuckets: vi.fn().mockResolvedValue([5n]),
+    getVaultLps: vi.fn().mockResolvedValue(0n),
+    lpToCollateral: vi.fn().mockResolvedValue(0n),
     getBufferTotal: vi.fn().mockResolvedValue(0n),
     getLup: vi.fn().mockResolvedValue(110n),
     getHtp: vi.fn().mockResolvedValue(90n),
@@ -52,6 +54,7 @@ afterEach(() => {
   vi.doUnmock('../../src/ajna/utils/poolBalanceCap.ts');
   vi.doUnmock('../../src/utils/decimalConversion.ts');
   vi.doUnmock('../../src/utils/logger.ts');
+  vi.doUnmock('../../src/utils/chainTime.ts');
 });
 
 describe('arkRun aborts on nested transaction failure', () => {
@@ -76,6 +79,7 @@ describe('arkRun aborts on nested transaction failure', () => {
     }));
     vi.doMock('../../src/subgraph/poolHealth.ts', () => ({
       poolHasBadDebt: vi.fn().mockResolvedValue(false),
+      SubgraphUnavailableError: class extends Error {},
     }));
     vi.doMock('../../src/utils/transaction.ts', () => ({
       getGasWithBuffer: vi.fn().mockResolvedValue(1n),
@@ -85,12 +89,17 @@ describe('arkRun aborts on nested transaction failure', () => {
       getPrice: vi.fn().mockResolvedValue(100n),
     }));
     vi.doMock('../../src/ajna/utils/poolBalanceCap.ts', () => ({
-      poolBalanceCap: vi.fn(async (amount: bigint) => amount),
+      poolBalanceCapWad: vi.fn(async (amount: bigint) => amount),
     }));
     vi.doMock('../../src/utils/decimalConversion.ts', () => ({
       toWad: vi.fn((amount: bigint) => amount),
+      toWadTokenUnit: vi.fn(() => 1n),
     }));
     vi.doMock('../../src/utils/logger.ts', () => ({ log }));
+    vi.doMock('../../src/utils/chainTime.ts', () => ({
+      getChainTime: vi.fn().mockResolvedValue(0n),
+      ChainTimeUnavailableError: class extends Error {},
+    }));
 
     const { arkRun } = await import('../../src/keepers/arkKeeper.ts');
 
@@ -115,5 +124,126 @@ describe('arkRun aborts on nested transaction failure', () => {
     expect(vault.move).not.toHaveBeenCalled();
     expect(vault.moveToBuffer).not.toHaveBeenCalled();
     expect(vault.moveFromBuffer).not.toHaveBeenCalled();
+  });
+
+  it('does not index zero HTP for a no-debt pool', async () => {
+    const vault = buildVault(ARK);
+    const log = { error: vi.fn(), info: vi.fn(), warn: vi.fn() };
+    const handleTransaction = vi.fn().mockResolvedValue({ status: true, assets: 0n });
+
+    vault.getBuckets.mockResolvedValue([]);
+    vault.getHtp.mockResolvedValue(0n);
+    vault.getBankruptcyTime.mockResolvedValue(0n);
+    vault.getPriceToIndex.mockImplementation(async (price: bigint) => {
+      if (price === 0n) throw new Error('BucketPriceOutOfBounds');
+      if (price === 110n) return 11n;
+      return 10n;
+    });
+
+    vi.doMock('../../src/ark/vault.ts', () => ({
+      createVault: vi.fn(() => vault),
+    }));
+    vi.doMock('../../src/subgraph/poolHealth.ts', () => ({
+      poolHasBadDebt: vi.fn().mockResolvedValue(false),
+      SubgraphUnavailableError: class extends Error {},
+    }));
+    vi.doMock('../../src/utils/transaction.ts', () => ({
+      getGasWithBuffer: vi.fn().mockResolvedValue(1n),
+      handleTransaction,
+    }));
+    vi.doMock('../../src/oracle/price.ts', () => ({
+      getPrice: vi.fn().mockResolvedValue(100n),
+    }));
+    vi.doMock('../../src/ajna/utils/poolBalanceCap.ts', () => ({
+      poolBalanceCapWad: vi.fn(async (amount: bigint) => amount),
+    }));
+    vi.doMock('../../src/utils/decimalConversion.ts', () => ({
+      toWad: vi.fn((amount: bigint) => amount),
+      toWadTokenUnit: vi.fn(() => 1n),
+    }));
+    vi.doMock('../../src/utils/logger.ts', () => ({ log }));
+    vi.doMock('../../src/utils/chainTime.ts', () => ({
+      getChainTime: vi.fn().mockResolvedValue(0n),
+      ChainTimeUnavailableError: class extends Error {},
+    }));
+
+    const { arkRun } = await import('../../src/keepers/arkKeeper.ts');
+
+    const settings = {
+      optimalBucketDiff: 0n,
+      bufferPadding: 0n,
+      minMoveAmount: 1n,
+      minTimeSinceBankruptcy: 0n,
+      maxAuctionAge: 0,
+    };
+
+    await expect(arkRun(ARK, ARK, settings)).resolves.toBeUndefined();
+
+    expect(vault.getPriceToIndex).not.toHaveBeenCalledWith(0n);
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'ark_run_complete',
+        ark: ARK,
+        quoteTokenPrice: 100n,
+        optimalBucket: 10n,
+      }),
+      expect.stringContaining(ARK),
+    );
+  });
+
+  it('aborts cleanly when optimalBucketDiff pushes the bucket outside Ajna bounds', async () => {
+    const vault = buildVault(ARK);
+    const log = { error: vi.fn(), info: vi.fn(), warn: vi.fn() };
+    const handleTransaction = vi.fn().mockResolvedValue({ status: true, assets: 0n });
+
+    vault.getBuckets.mockResolvedValue([]);
+    vault.getPriceToIndex.mockResolvedValue(7388n);
+
+    vi.doMock('../../src/ark/vault.ts', () => ({
+      createVault: vi.fn(() => vault),
+    }));
+    vi.doMock('../../src/subgraph/poolHealth.ts', () => ({
+      poolHasBadDebt: vi.fn().mockResolvedValue(false),
+      SubgraphUnavailableError: class extends Error {},
+    }));
+    vi.doMock('../../src/utils/transaction.ts', () => ({
+      getGasWithBuffer: vi.fn().mockResolvedValue(1n),
+      handleTransaction,
+    }));
+    vi.doMock('../../src/oracle/price.ts', () => ({
+      getPrice: vi.fn().mockResolvedValue(100n),
+    }));
+    vi.doMock('../../src/ajna/utils/poolBalanceCap.ts', () => ({
+      poolBalanceCapWad: vi.fn(async (amount: bigint) => amount),
+    }));
+    vi.doMock('../../src/utils/decimalConversion.ts', () => ({
+      toWad: vi.fn((amount: bigint) => amount),
+      toWadTokenUnit: vi.fn(() => 1n),
+    }));
+    vi.doMock('../../src/utils/logger.ts', () => ({ log }));
+    vi.doMock('../../src/utils/chainTime.ts', () => ({
+      getChainTime: vi.fn().mockResolvedValue(0n),
+      ChainTimeUnavailableError: class extends Error {},
+    }));
+
+    const { arkRun } = await import('../../src/keepers/arkKeeper.ts');
+
+    await arkRun(ARK, ARK, {
+      optimalBucketDiff: 1n,
+      bufferPadding: 0n,
+      minMoveAmount: 1n,
+      minTimeSinceBankruptcy: 0n,
+      maxAuctionAge: 0,
+    });
+
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'ark_run_aborted',
+        ark: ARK,
+        reason: 'optimal bucket is outside Ajna bucket range',
+      }),
+      expect.stringContaining(ARK),
+    );
+    expect(vault.drain).not.toHaveBeenCalled();
   });
 });

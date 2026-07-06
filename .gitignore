@@ -12,3 +12,4 @@ out/
 config.json
 /keystore/
 .claude/settings.local.json
+CLAUDE.md

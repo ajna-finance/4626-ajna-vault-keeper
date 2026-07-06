@@ -17,6 +17,11 @@ export function toWad(rawValue: bigint, assetDecimals: number): bigint {
   return scaleDecimals(rawValue, assetDecimals, 18);
 }
 
+export function toWadTokenUnit(assetDecimals: number): bigint {
+  const unit = toWad(1n, assetDecimals);
+  return unit > 0n ? unit : 1n;
+}
+
 export function toAsset(rawValue: string | number, decimals: number): bigint {
   return _parseDecimalToUnits(rawValue, decimals);
 }

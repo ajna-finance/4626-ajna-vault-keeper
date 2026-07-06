@@ -33,10 +33,12 @@ import {
   type Ark,
   type ArkAllocation,
   type BufferAllocation,
-} from '../../../src/keepers/metavaultKeeper';
+} from '../../../src/metavault/planner';
+
 import { evaluateRates } from '../../../src/metavault/utils/evaluateRates';
 import { type Address, maxUint256 } from 'viem';
 import { type createVault } from '../../../src/ark/vault';
+import { accrualPad, effectiveWithdrawal, simulateEulerAccounting } from '../../helpers/eulerModel';
 
 const S = 1_000_000n;
 const ADDRESSES = [
@@ -111,34 +113,40 @@ const rebalanceScenarioArb = fc
             id: ADDRESSES[0],
             assets: assetsA,
             initialAssets: assetsA,
+            realInitialAssets: assetsA,
             vault: makeVault(ADDRESSES[0]),
             min: mins[0],
             max: maxA,
             rate: rates[0],
             minMoveAmount: 1_000_001n,
             hasBadDebt: badDebt[0],
+            supplyCap: maxUint256,
           },
           {
             id: ADDRESSES[1],
             assets: assetsB,
             initialAssets: assetsB,
+            realInitialAssets: assetsB,
             vault: makeVault(ADDRESSES[1]),
             min: mins[1],
             max: maxB,
             rate: rates[1],
             minMoveAmount: 1_000_001n,
             hasBadDebt: badDebt[1],
+            supplyCap: maxUint256,
           },
           {
             id: ADDRESSES[2],
             assets: assetsC,
             initialAssets: assetsC,
+            realInitialAssets: assetsC,
             vault: makeVault(ADDRESSES[2]),
             min: mins[2],
             max: maxC,
             rate: rates[2],
             minMoveAmount: 1_000_001n,
             hasBadDebt: badDebt[2],
+            supplyCap: maxUint256,
           },
         ];
 
@@ -146,6 +154,8 @@ const rebalanceScenarioArb = fc
           id: BUFFER_ADDRESS,
           assets: bufferAssets,
           initialAssets: bufferAssets,
+          realInitialAssets: bufferAssets,
+          supplyCap: maxUint256,
           allocation: bufferAllocation,
         };
 
@@ -203,34 +213,40 @@ const rateScenarioArb = fc
             id: ADDRESSES[0],
             assets: (totalAssets * BigInt(shares[0])) / 100n,
             initialAssets: (totalAssets * BigInt(shares[0])) / 100n,
+            realInitialAssets: (totalAssets * BigInt(shares[0])) / 100n,
             vault: makeVault(ADDRESSES[0]),
             min: mins[0],
             max: maxA,
             rate: rates[0],
             minMoveAmount: 1_000_001n,
             hasBadDebt: badDebt[0],
+            supplyCap: maxUint256,
           },
           {
             id: ADDRESSES[1],
             assets: (totalAssets * BigInt(shares[1])) / 100n,
             initialAssets: (totalAssets * BigInt(shares[1])) / 100n,
+            realInitialAssets: (totalAssets * BigInt(shares[1])) / 100n,
             vault: makeVault(ADDRESSES[1]),
             min: mins[1],
             max: maxB,
             rate: rates[1],
             minMoveAmount: 1_000_001n,
             hasBadDebt: badDebt[1],
+            supplyCap: maxUint256,
           },
           {
             id: ADDRESSES[2],
             assets: (totalAssets * BigInt(shares[2])) / 100n,
             initialAssets: (totalAssets * BigInt(shares[2])) / 100n,
+            realInitialAssets: (totalAssets * BigInt(shares[2])) / 100n,
             vault: makeVault(ADDRESSES[2]),
             min: mins[2],
             max: maxC,
             rate: rates[2],
             minMoveAmount: 1_000_001n,
             hasBadDebt: badDebt[2],
+            supplyCap: maxUint256,
           },
         ];
 
@@ -332,43 +348,62 @@ describe('metavault planner property tests', () => {
         _rebalanceBuffer(arks, buffer, totalAssets);
 
         const result = _buildFinalAllocations(arks, buffer);
-        expect(Array.isArray(result)).toBe(true);
 
-        const allocations = result as Array<{ id: Address; assets: bigint }>;
         const all = [
           ...arks.map((ark) => ({
             id: ark.id,
             assets: ark.assets,
             initialAssets: ark.initialAssets,
+            realInitialAssets: ark.realInitialAssets,
           })),
           {
             id: buffer.id,
             assets: buffer.assets,
             initialAssets: buffer.initialAssets,
+            realInitialAssets: buffer.realInitialAssets,
           },
         ];
-        const decreasing = all.filter((entry) => entry.assets < entry.initialAssets);
+        const decreasing = all
+          .filter((entry) => entry.assets < entry.initialAssets)
+          .map((entry) => {
+            const decrease = entry.initialAssets - entry.assets;
+            return {
+              ...entry,
+              decrease,
+              effectiveWithdrawn: effectiveWithdrawal(entry.realInitialAssets, decrease),
+            };
+          });
         const increasing = all.filter((entry) => entry.assets > entry.initialAssets);
+        const effectiveDecreasing = decreasing.filter((entry) => entry.effectiveWithdrawn > 0n);
+        const totalEffectiveWithdrawn = effectiveDecreasing.reduce(
+          (sum, entry) => sum + entry.effectiveWithdrawn,
+          0n,
+        );
 
         if (decreasing.length === 0 && increasing.length === 0) {
-          expect(allocations).toEqual([]);
+          expect(result).toEqual([]);
           return;
         }
 
-        expect(allocations).toHaveLength(decreasing.length + increasing.length);
-
-        for (let i = 0; i < decreasing.length; i++) {
-          expect(allocations[i]).toEqual({
-            id: decreasing[i]!.id,
-            assets: decreasing[i]!.assets,
-          });
+        if (totalEffectiveWithdrawn === 0n) {
+          expect(typeof result).toBe('string');
+          expect(String(result)).toContain('accrual pad absorbs planned withdrawals');
+          return;
         }
 
-        for (let i = 0; i < Math.max(increasing.length - 1, 0); i++) {
-          expect(allocations[decreasing.length + i]).toEqual({
-            id: increasing[i]!.id,
-            assets: increasing[i]!.assets,
-          });
+        expect(Array.isArray(result)).toBe(true);
+        const allocations = result as Array<{ id: Address; assets: bigint }>;
+        expect(allocations).toHaveLength(effectiveDecreasing.length + increasing.length);
+
+        for (let i = 0; i < effectiveDecreasing.length; i++) {
+          const entry = effectiveDecreasing[i]!;
+          const delta = entry.assets - entry.initialAssets;
+          const target =
+            entry.realInitialAssets + delta + accrualPad(entry.realInitialAssets, -delta);
+          expect(allocations[i]).toEqual({ id: entry.id, assets: target });
+          // Semantic invariant: the submitted target must remain ≤ realInitialAssets so Euler
+          // takes the withdraw branch (target > real would supply, breaking the invariant).
+          expect(allocations[i]!.assets).toBeLessThanOrEqual(entry.realInitialAssets);
         }
 
         if (increasing.length > 0) {
@@ -377,6 +412,104 @@ describe('metavault planner property tests', () => {
             assets: maxUint256,
           });
         }
+
+        const accounting = simulateEulerAccounting(allocations, all);
+        expect(accounting.totalWithdrawn).toBe(totalEffectiveWithdrawn);
+        expect(accounting.totalSupplied).toBe(totalEffectiveWithdrawn);
+
+        for (const allocation of allocations.slice(effectiveDecreasing.length, -1)) {
+          const entry = increasing.find((candidate) => candidate.id === allocation.id)!;
+          const supplied = allocation.assets - entry.realInitialAssets;
+          const requested = entry.assets - entry.initialAssets;
+          expect(supplied).toBeGreaterThanOrEqual(0n);
+          expect(supplied).toBeLessThanOrEqual(requested);
+        }
+      }),
+      { numRuns: 200 },
+    );
+  });
+
+  it('buildFinalAllocations anchors padded decreasing targets to realInitialAssets when pool-capped', () => {
+    fc.assert(
+      fc.property(rebalanceScenarioArb, ({ arks, buffer, totalAssets }) => {
+        // Simulate pool-capped ARKs: real Euler supply is several multiples of the planner's
+        // capped initialAssets. The padded target on every decreasing entry must anchor to
+        // realInitialAssets (not the planner's working assets), or Euler would attempt to
+        // withdraw the entire illiquid portion at reallocate time.
+        for (const ark of arks) {
+          ark.realInitialAssets = ark.initialAssets * 3n;
+        }
+        buffer.realInitialAssets = buffer.initialAssets * 3n;
+
+        _rebalanceBuffer(arks, buffer, totalAssets);
+
+        const result = _buildFinalAllocations(arks, buffer);
+
+        const all = [
+          ...arks.map((ark) => ({
+            id: ark.id,
+            assets: ark.assets,
+            initialAssets: ark.initialAssets,
+            realInitialAssets: ark.realInitialAssets,
+          })),
+          {
+            id: buffer.id,
+            assets: buffer.assets,
+            initialAssets: buffer.initialAssets,
+            realInitialAssets: buffer.realInitialAssets,
+          },
+        ];
+        const decreasing = all
+          .filter((entry) => entry.assets < entry.initialAssets)
+          .map((entry) => {
+            const decrease = entry.initialAssets - entry.assets;
+            return {
+              ...entry,
+              decrease,
+              effectiveWithdrawn: effectiveWithdrawal(entry.realInitialAssets, decrease),
+            };
+          });
+        const increasing = all.filter((entry) => entry.assets > entry.initialAssets);
+        const effectiveDecreasing = decreasing.filter((entry) => entry.effectiveWithdrawn > 0n);
+        const totalEffectiveWithdrawn = effectiveDecreasing.reduce(
+          (sum, entry) => sum + entry.effectiveWithdrawn,
+          0n,
+        );
+
+        if (decreasing.length === 0 && increasing.length === 0) {
+          expect(result).toEqual([]);
+          return;
+        }
+
+        if (totalEffectiveWithdrawn === 0n) {
+          expect(typeof result).toBe('string');
+          expect(String(result)).toContain('accrual pad absorbs planned withdrawals');
+          return;
+        }
+
+        expect(Array.isArray(result)).toBe(true);
+        const allocations = result as Array<{ id: Address; assets: bigint }>;
+        for (let i = 0; i < effectiveDecreasing.length; i++) {
+          const entry = effectiveDecreasing[i]!;
+          const delta = entry.assets - entry.initialAssets;
+          const expectedTarget =
+            entry.realInitialAssets + delta + accrualPad(entry.realInitialAssets, -delta);
+          expect(allocations[i]).toEqual({ id: entry.id, assets: expectedTarget });
+          // Same invariant: the padded decreasing target must never exceed realInitialAssets,
+          // even when realInitialAssets is much larger than the planner's capped initialAssets.
+          expect(allocations[i]!.assets).toBeLessThanOrEqual(entry.realInitialAssets);
+        }
+
+        if (increasing.length > 0) {
+          expect(allocations[allocations.length - 1]).toEqual({
+            id: increasing[increasing.length - 1]!.id,
+            assets: maxUint256,
+          });
+        }
+
+        const accounting = simulateEulerAccounting(allocations, all);
+        expect(accounting.totalWithdrawn).toBe(totalEffectiveWithdrawn);
+        expect(accounting.totalSupplied).toBe(totalEffectiveWithdrawn);
       }),
       { numRuns: 200 },
     );

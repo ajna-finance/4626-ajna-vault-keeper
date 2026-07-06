@@ -1,4 +1,3 @@
-import 'dotenv/config';
 import { readFileSync } from 'fs';
 
 export type BotMode = 'scheduler' | 'recovery-detect' | 'recovery-auto' | 'recovery-oneshot';

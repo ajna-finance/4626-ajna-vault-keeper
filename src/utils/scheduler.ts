@@ -12,14 +12,21 @@ import {
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-async function runScheduler() {
+export async function runKeeperInterval() {
   if (config.metavaultAddress) {
     await metavaultRun();
   }
 
   for (const ark of config.arks) {
-    const settings = resolveArkSettings(ark);
-    await arkRun(ark.vaultAddress, ark.vaultAuthAddress, settings);
+    try {
+      const settings = resolveArkSettings(ark);
+      await arkRun(ark.vaultAddress, ark.vaultAuthAddress, settings);
+    } catch (e) {
+      log.error(
+        { event: 'ark_run_failed', ark: ark.vaultAddress, vaultAuth: ark.vaultAuthAddress, err: e },
+        `ark run failed for ${ark.vaultAddress}; continuing to next ark`,
+      );
+    }
   }
 }
 
@@ -45,7 +52,7 @@ async function runRecoveryExecute() {
 async function runOnce() {
   switch (env.BOT_MODE) {
     case 'scheduler':
-      return runScheduler();
+      return runKeeperInterval();
     case 'recovery-detect':
       return runRecoveryDetect();
     case 'recovery-auto':

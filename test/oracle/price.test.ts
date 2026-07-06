@@ -26,4 +26,10 @@ describe('get fixed price', () => {
     const currentPrice = await getPrice();
     expect(currentPrice).toBe(1000000000000000000n);
   });
+
+  it('keeps fixed-price validation limited to positive decimal parsing', async () => {
+    config.oracle.fixedPrice = '0.000000001';
+    const currentPrice = await getPrice();
+    expect(currentPrice).toBe(1000000000n);
+  });
 });

@@ -1,11 +1,15 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { evaluateRates } from '../../../src/metavault/utils/evaluateRates';
-import { type Ark } from '../../../src/keepers/metavaultKeeper';
+import { type Ark } from '../../../src/metavault/planner';
 import { type Address } from 'viem';
 import { type createVault } from '../../../src/ark/vault';
 
+const configMock = { minRateDiff: 10 };
+
 vi.mock('../../../src/utils/config', () => ({
-  config: { minRateDiff: 10 },
+  get config() {
+    return configMock;
+  },
 }));
 
 const ADDR_A = '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' as Address;
@@ -85,5 +89,54 @@ describe('evaluateRates', () => {
     const result = evaluateRates([makeArk(ADDR_A, 100n), makeArk(ADDR_B, 100n)]);
     expect(result[0]!.address).toBe(ADDR_A);
     expect(result[1]!.address).toBe(ADDR_B);
+  });
+
+  it('returns no targets when all rates are zero', () => {
+    const result = evaluateRates([makeArk(ADDR_A, 0n), makeArk(ADDR_B, 0n), makeArk(ADDR_C, 0n)]);
+    expect(result[0]!.targets).toEqual([]);
+    expect(result[1]!.targets).toEqual([]);
+    expect(result[2]!.targets).toEqual([]);
+  });
+
+  it('returns no targets for zero-rate origin against another zero-rate ark', () => {
+    const result = evaluateRates([makeArk(ADDR_A, 0n), makeArk(ADDR_B, 0n)]);
+    expect(result[0]!.targets).toEqual([]);
+    expect(result[1]!.targets).toEqual([]);
+  });
+
+  it('still identifies a positive-rate target for a zero-rate origin', () => {
+    const result = evaluateRates([makeArk(ADDR_A, 0n), makeArk(ADDR_B, 100n)]);
+    expect(result[0]!.targets).toEqual([ADDR_B]);
+    expect(result[1]!.targets).toEqual([]);
+  });
+
+  describe('with minRateDiff = 0', () => {
+    const originalMinRateDiff = configMock.minRateDiff;
+
+    beforeEach(() => {
+      configMock.minRateDiff = 0;
+    });
+
+    afterEach(() => {
+      configMock.minRateDiff = originalMinRateDiff;
+    });
+
+    it('returns no targets when equal-rate peers would otherwise tie', () => {
+      const result = evaluateRates([makeArk(ADDR_A, 100n), makeArk(ADDR_B, 100n)]);
+      expect(result[0]!.targets).toEqual([]);
+      expect(result[1]!.targets).toEqual([]);
+    });
+
+    it('returns no targets when all rates are zero', () => {
+      const result = evaluateRates([makeArk(ADDR_A, 0n), makeArk(ADDR_B, 0n)]);
+      expect(result[0]!.targets).toEqual([]);
+      expect(result[1]!.targets).toEqual([]);
+    });
+
+    it('identifies any strictly higher target', () => {
+      const result = evaluateRates([makeArk(ADDR_A, 100n), makeArk(ADDR_B, 101n)]);
+      expect(result[0]!.targets).toEqual([ADDR_B]);
+      expect(result[1]!.targets).toEqual([]);
+    });
   });
 });

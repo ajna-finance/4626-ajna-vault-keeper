@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { toAsset, toWad } from '../../src/utils/decimalConversion.ts';
+import { toAsset, toWad, toWadTokenUnit } from '../../src/utils/decimalConversion.ts';
 
 describe('decimal conversion helpers', () => {
   it('scales asset amounts into WAD using asset decimals', () => {
     expect(toWad(1_000_000n, 6)).toBe(1_000_000_000_000_000_000n);
+  });
+
+  it('computes the WAD value of one token base unit', () => {
+    expect(toWadTokenUnit(6)).toBe(1_000_000_000_000n);
+    expect(toWadTokenUnit(18)).toBe(1n);
   });
 
   it('parses human-readable prices into Ajna WAD prices exactly', () => {

@@ -10,14 +10,14 @@ describe('config fixedPrice validation', () => {
     vi.doMock('fs', () => ({
       readFileSync: () => `{
         "chainId": 1,
-        "quoteTokenAddress": "0x1",
+        "quoteTokenAddress": "0x0000000000000000000000000000000000000001",
         "keeper": {
           "intervalMs": 1,
           "haltIfLupBelowHtp": true
         },
         "oracle": {
           "onchainPrimary": true,
-          "onchainAddress": "0x2",
+          "onchainAddress": "0x0000000000000000000000000000000000000002",
           "onchainMaxStaleness": null,
           "fixedPrice": 0.999870478245824934
         },
@@ -27,7 +27,7 @@ describe('config fixedPrice validation', () => {
         },
         "arks": [],
         "buffer": {
-          "address": "0x3",
+          "address": "0x0000000000000000000000000000000000000003",
           "allocation": 0
         },
         "minRateDiff": 10

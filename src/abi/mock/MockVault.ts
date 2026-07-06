@@ -5,6 +5,40 @@ export const mockVaultAbi = [
     stateMutability: 'nonpayable',
   },
   {
+    type: 'event',
+    name: 'Move',
+    inputs: [
+      { name: 'caller', type: 'address', indexed: true },
+      { name: 'pool', type: 'address', indexed: true },
+      { name: 'fromBucket', type: 'uint256', indexed: false },
+      { name: 'toBucket', type: 'uint256', indexed: false },
+      { name: 'amount', type: 'uint256', indexed: false },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
+    name: 'MoveToBuffer',
+    inputs: [
+      { name: 'caller', type: 'address', indexed: true },
+      { name: 'pool', type: 'address', indexed: true },
+      { name: 'bucket', type: 'uint256', indexed: false },
+      { name: 'amount', type: 'uint256', indexed: false },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
+    name: 'MoveFromBuffer',
+    inputs: [
+      { name: 'caller', type: 'address', indexed: true },
+      { name: 'pool', type: 'address', indexed: true },
+      { name: 'bucket', type: 'uint256', indexed: false },
+      { name: 'amount', type: 'uint256', indexed: false },
+    ],
+    anonymous: false,
+  },
+  {
     type: 'function',
     name: 'paused',
     stateMutability: 'view',

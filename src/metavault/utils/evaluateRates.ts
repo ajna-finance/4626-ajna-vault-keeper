@@ -1,5 +1,5 @@
 import { config } from '../../utils/config.ts';
-import { type Ark } from '../../keepers/metavaultKeeper.ts';
+import { type Ark } from '../planner.ts';
 import { type Address } from 'viem';
 
 export type ArkEvaluation = {
@@ -23,5 +23,6 @@ export function evaluateRates(arks: Ark[]): ArkEvaluation[] {
 }
 
 function _rateExceedsMin(targetRate: bigint, originRate: bigint): boolean {
+  if (targetRate <= originRate) return false;
   return targetRate * 100n >= originRate * BigInt(100 + config.minRateDiff);
 }

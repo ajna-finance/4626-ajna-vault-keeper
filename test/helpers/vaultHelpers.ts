@@ -2,6 +2,7 @@ import { contract } from '../../src/utils/contract';
 import { config } from '../../src/utils/config';
 import { createVault } from '../../src/ark/vault';
 import type { Address } from 'viem';
+import { waitForWrite } from './transactions';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -34,41 +35,48 @@ const getPoolInfoUtils = async () => {
   return contract('poolInfoUtils', addr)();
 };
 
-export const setBufferRatio = (ratio: bigint) => vaultAuth().write.setBufferRatio([ratio]);
-export const setMinBucketIndex = (index: bigint) => vaultAuth().write.setMinBucketIndex([index]);
+export const setBufferRatio = (ratio: bigint) =>
+  waitForWrite(vaultAuth().write.setBufferRatio([ratio]));
+export const setMinBucketIndex = (index: bigint) =>
+  waitForWrite(vaultAuth().write.setMinBucketIndex([index]));
 
-export const setAuthPaused = (status: boolean) => vaultAuth().write.setAuthPaused([status]);
+export const setAuthPaused = (status: boolean) =>
+  waitForWrite(vaultAuth().write.setAuthPaused([status]));
 export const setRemovedCollateralValue = (v: bigint) =>
-  vault().write.setRemovedCollateralValue([v]);
-export const setLpDust = (d: bigint) => vault().write.setLpDust([d]);
-export const setVaultAuthRef = (auth: Address) => vault().write.setAuth([auth]);
-export const setCollateralToken = (addr: Address) => vault().write.setCollateralToken([addr]);
-export const setSwapper = (addr: Address) => vaultAuth().write.setSwapper([addr]);
+  waitForWrite(vault().write.setRemovedCollateralValue([v]));
+export const setLpDust = (d: bigint) => waitForWrite(vault().write.setLpDust([d]));
+export const setVaultAuthRef = (auth: Address) => waitForWrite(vault().write.setAuth([auth]));
+export const setCollateralToken = (addr: Address) =>
+  waitForWrite(vault().write.setCollateralToken([addr]));
+export const setSwapper = (addr: Address) => waitForWrite(vaultAuth().write.setSwapper([addr]));
 
 export const setLpToCollateral = async (index: bigint, amount: bigint) =>
-  (await getPoolInfoUtils()).write.setLpToCollateral([index, amount]);
+  waitForWrite((await getPoolInfoUtils()).write.setLpToCollateral([index, amount]));
 export const setLenderLps = async (index: bigint, lender: Address, lps: bigint) =>
-  (await getPool()).write.setLenderLps([index, lender, lps]);
+  waitForWrite((await getPool()).write.setLenderLps([index, lender, lps]));
 export const setPoolCollateralAddress = async (addr: Address) =>
-  (await getPool()).write.setCollateralAddress([addr]);
+  waitForWrite((await getPool()).write.setCollateralAddress([addr]));
 
-const _setPrice = (price: bigint) => chronicle().write.setPrice(price);
+const _setPrice = (price: bigint) => waitForWrite(chronicle().write.setPrice(price));
 
 export const setBankruptcyTime = async (timestamp: bigint) =>
-  (await getPool()).write.setBankruptcyTime(timestamp);
-export const setLps = async (lps: bigint) => (await getPool()).write.setLps(lps);
+  waitForWrite((await getPool()).write.setBankruptcyTime(timestamp));
+export const setLps = async (lps: bigint) => waitForWrite((await getPool()).write.setLps(lps));
 
 export const setAuctionStatus = async (
   borrower: Address,
   kickTime: bigint,
   collateral: bigint,
   debt: bigint,
-) => (await getPoolInfoUtils()).write.setAuctionStatus(borrower, kickTime, collateral, debt);
-const _setLup = async (lup: bigint) => (await getPoolInfoUtils()).write.setLup(lup);
-const _setHtp = async (htp: bigint) => (await getPoolInfoUtils()).write.setHtp(htp);
+) =>
+  waitForWrite(
+    (await getPoolInfoUtils()).write.setAuctionStatus(borrower, kickTime, collateral, debt),
+  );
+const _setLup = async (lup: bigint) => waitForWrite((await getPoolInfoUtils()).write.setLup(lup));
+const _setHtp = async (htp: bigint) => waitForWrite((await getPoolInfoUtils()).write.setHtp(htp));
 
 const _addBucket = (index: bigint, price: bigint, amount: bigint) =>
-  vault().write.addBucket(index, price, amount);
+  waitForWrite(vault().write.addBucket(index, price, amount));
 
 export function useMocks() {
   process.env.USE_MOCKS = 'true';

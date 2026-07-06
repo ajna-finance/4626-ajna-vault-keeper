@@ -49,6 +49,7 @@ afterEach(() => {
   vi.doUnmock('../../src/ajna/utils/poolBalanceCap.ts');
   vi.doUnmock('../../src/utils/decimalConversion.ts');
   vi.doUnmock('../../src/utils/logger.ts');
+  vi.doUnmock('../../src/utils/chainTime.ts');
 });
 
 describe('ark halt scoping', () => {
@@ -63,6 +64,7 @@ describe('ark halt scoping', () => {
     }));
     vi.doMock('../../src/subgraph/poolHealth.ts', () => ({
       poolHasBadDebt: vi.fn().mockResolvedValue(false),
+      SubgraphUnavailableError: class extends Error {},
     }));
     vi.doMock('../../src/utils/transaction.ts', () => ({
       getGasWithBuffer: vi.fn().mockResolvedValue(1n),
@@ -72,12 +74,17 @@ describe('ark halt scoping', () => {
       getPrice: vi.fn().mockResolvedValue(100n),
     }));
     vi.doMock('../../src/ajna/utils/poolBalanceCap.ts', () => ({
-      poolBalanceCap: vi.fn(async (amount: bigint) => amount),
+      poolBalanceCapWad: vi.fn(async (amount: bigint) => amount),
     }));
     vi.doMock('../../src/utils/decimalConversion.ts', () => ({
       toWad: vi.fn((amount: bigint) => amount),
+      toWadTokenUnit: vi.fn(() => 1n),
     }));
     vi.doMock('../../src/utils/logger.ts', () => ({ log }));
+    vi.doMock('../../src/utils/chainTime.ts', () => ({
+      getChainTime: vi.fn().mockResolvedValue(0n),
+      ChainTimeUnavailableError: class extends Error {},
+    }));
 
     const { arkRun, haltKeeper, isArkHalted } = await import('../../src/keepers/arkKeeper.ts');
 
@@ -103,5 +110,44 @@ describe('ark halt scoping', () => {
       expect.objectContaining({ event: 'ark_run_aborted', ark: firstArk, reason: 'keeper halted' }),
       expect.stringContaining(firstArk),
     );
+  });
+
+  // The metavault config validator accepts ark.address and ark.vaultAddress that lowercase to
+  // the same string (e.g., one EIP-55 checksummed, the other lowercase). Halts may be fired
+  // with one casing and looked up with another; the registry must canonicalize both sides so
+  // the metavault's halt short-circuit cannot silently miss a halt that the ARK keeper fired.
+  it('matches halts regardless of address casing', async () => {
+    vi.doMock('../../src/ark/vault.ts', () => ({ createVault: vi.fn() }));
+    vi.doMock('../../src/subgraph/poolHealth.ts', () => ({
+      poolHasBadDebt: vi.fn(),
+      SubgraphUnavailableError: class extends Error {},
+    }));
+    vi.doMock('../../src/utils/transaction.ts', () => ({
+      getGasWithBuffer: vi.fn(),
+      handleTransaction: vi.fn(),
+    }));
+    vi.doMock('../../src/oracle/price.ts', () => ({ getPrice: vi.fn() }));
+    vi.doMock('../../src/ajna/utils/poolBalanceCap.ts', () => ({ poolBalanceCapWad: vi.fn() }));
+    vi.doMock('../../src/utils/decimalConversion.ts', () => ({
+      toWad: vi.fn(),
+      toWadTokenUnit: vi.fn(() => 1n),
+    }));
+    vi.doMock('../../src/utils/logger.ts', () => ({
+      log: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
+    }));
+    vi.doMock('../../src/utils/chainTime.ts', () => ({
+      getChainTime: vi.fn().mockResolvedValue(0n),
+      ChainTimeUnavailableError: class extends Error {},
+    }));
+
+    const { haltKeeper, isArkHalted } = await import('../../src/keepers/arkKeeper.ts');
+
+    const lower = '0x00000000000000000000000000000000000000aa' as Address;
+    const upper = '0x00000000000000000000000000000000000000AA' as Address;
+
+    haltKeeper(upper);
+
+    expect(isArkHalted(lower)).toBe(true);
+    expect(isArkHalted(upper)).toBe(true);
   });
 });

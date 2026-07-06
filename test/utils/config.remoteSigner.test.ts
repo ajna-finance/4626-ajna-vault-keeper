@@ -8,7 +8,7 @@ afterEach(() => {
 function configWith(remoteSignerSnippet: string, intervalMs: number = 60000): string {
   return `{
     "chainId": 1,
-    "quoteTokenAddress": "0x1",
+    "quoteTokenAddress": "0x0000000000000000000000000000000000000001",
     "keeper": {
       "intervalMs": ${intervalMs},
       "haltIfLupBelowHtp": true
@@ -25,7 +25,7 @@ function configWith(remoteSignerSnippet: string, intervalMs: number = 60000): st
     }${remoteSignerSnippet ? `,\n    ${remoteSignerSnippet}` : ''},
     "arks": [],
     "buffer": {
-      "address": "0x3",
+      "address": "0x0000000000000000000000000000000000000003",
       "allocation": 0
     },
     "minRateDiff": 10

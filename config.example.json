@@ -14,6 +14,7 @@
     "onchainPrimary": true,
     "onchainAddress": "0x74661a9ea74fD04975c6eBc6B155Abf8f885636c",
     "onchainMaxStaleness": 86400,
+    "offchainMaxStaleness": 86400,
     "fixedPrice": null,
     "futureSkewTolerance": 120
   },

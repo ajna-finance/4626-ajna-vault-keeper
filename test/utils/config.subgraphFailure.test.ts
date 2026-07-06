@@ -10,14 +10,14 @@ describe('config exitOnSubgraphFailure handling', () => {
     vi.doMock('fs', () => ({
       readFileSync: () => `{
         "chainId": 1,
-        "quoteTokenAddress": "0x1",
+        "quoteTokenAddress": "0x0000000000000000000000000000000000000001",
         "keeper": {
           "intervalMs": 1,
           "haltIfLupBelowHtp": true
         },
         "oracle": {
           "onchainPrimary": true,
-          "onchainAddress": "0x2",
+          "onchainAddress": "0x0000000000000000000000000000000000000002",
           "fixedPrice": null
         },
         "arkGlobal": {},
@@ -26,7 +26,7 @@ describe('config exitOnSubgraphFailure handling', () => {
         },
         "arks": [],
         "buffer": {
-          "address": "0x3",
+          "address": "0x0000000000000000000000000000000000000003",
           "allocation": 0
         },
         "minRateDiff": 10
@@ -41,7 +41,7 @@ describe('config exitOnSubgraphFailure handling', () => {
     vi.doMock('fs', () => ({
       readFileSync: () => `{
         "chainId": 1,
-        "quoteTokenAddress": "0x1",
+        "quoteTokenAddress": "0x0000000000000000000000000000000000000001",
         "keeper": {
           "intervalMs": 1,
           "haltIfLupBelowHtp": true,
@@ -49,7 +49,7 @@ describe('config exitOnSubgraphFailure handling', () => {
         },
         "oracle": {
           "onchainPrimary": true,
-          "onchainAddress": "0x2",
+          "onchainAddress": "0x0000000000000000000000000000000000000002",
           "fixedPrice": null
         },
         "arkGlobal": {},
@@ -58,7 +58,7 @@ describe('config exitOnSubgraphFailure handling', () => {
         },
         "arks": [],
         "buffer": {
-          "address": "0x3",
+          "address": "0x0000000000000000000000000000000000000003",
           "allocation": 0
         },
         "minRateDiff": 10

@@ -3,6 +3,7 @@ import { config } from '../utils/config.ts';
 import { toAsset } from '../utils/decimalConversion.ts';
 import { getOffchainPrice } from './offchain.ts';
 import { getOnchainPrice } from './onchain.ts';
+import { AJNA_MAX_PRICE, AJNA_MIN_PRICE } from '../ajna/constants.ts';
 
 const AJNA_PRICE_DECIMALS = 18;
 
@@ -26,7 +27,7 @@ export async function getPrice(): Promise<bigint> {
       const price = await SOURCES[tag]();
       const normalizedPrice =
         typeof price === 'bigint' ? price : toAsset(price, AJNA_PRICE_DECIMALS);
-      if (normalizedPrice <= 0n) throw new Error(`${tag} price must be positive`);
+      validateLivePrice(normalizedPrice, tag);
       return normalizedPrice;
     } catch (err) {
       const e = new Error(`${tag} price query failed`, { cause: err });
@@ -36,6 +37,13 @@ export async function getPrice(): Promise<bigint> {
   }
 
   throw new AggregateError(errors, 'unable to fetch price from either source');
+}
+
+function validateLivePrice(price: bigint, tag: string): void {
+  if (price <= 0n) throw new Error(`${tag} price must be positive`);
+  if (price < AJNA_MIN_PRICE || price > AJNA_MAX_PRICE) {
+    throw new Error(`${tag} price is outside Ajna price range`);
+  }
 }
 
 async function getFixedPrice(rawPrice: string): Promise<bigint> {

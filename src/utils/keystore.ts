@@ -1,5 +1,5 @@
 import { randomBytes, scryptSync, createCipheriv, createDecipheriv } from 'node:crypto';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, chmod } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { keccak256 as viemKeccak256 } from 'viem';
@@ -12,6 +12,30 @@ const SCRYPT_N = 262144;
 const SCRYPT_R = 8;
 const SCRYPT_P = 1;
 const DKLEN = 32;
+const KEYSTORE_FILE_MODE = 0o600;
+
+const MIN_SCRYPT_N = 1024;
+const MAX_SCRYPT_N = 1048576;
+const MAX_SCRYPT_R = 16;
+const MAX_SCRYPT_P = 16;
+const MIN_SALT_BYTES = 16;
+const MAX_SALT_BYTES = 64;
+const IV_BYTES = 16;
+const HEX_PATTERN = /^[0-9a-fA-F]*$/;
+
+function isSafePositiveInt(value: unknown): value is number {
+  return (
+    typeof value === 'number' && Number.isInteger(value) && value > 0 && Number.isSafeInteger(value)
+  );
+}
+
+function isPowerOfTwo(value: number): boolean {
+  return value > 0 && (value & (value - 1)) === 0;
+}
+
+function isEvenHexString(value: unknown): value is string {
+  return typeof value === 'string' && value.length % 2 === 0 && HEX_PATTERN.test(value);
+}
 
 interface KeystoreV3 {
   version: 3;
@@ -101,16 +125,47 @@ export function decryptKeystore(keystore: KeystoreV3, password: string): `0x${st
   if (c.kdf !== KDF) {
     throw new Error(`Unsupported KDF: ${c.kdf}`);
   }
+  if (c.cipher !== CIPHER) {
+    throw new Error(`Unsupported cipher: ${c.cipher}`);
+  }
 
-  const salt = Buffer.from(c.kdfparams.salt, 'hex');
+  const { dklen, n, r, p, salt: saltHex } = c.kdfparams;
+
+  if (dklen !== DKLEN) {
+    throw new Error(`Unsupported scrypt dklen: ${dklen} (expected ${DKLEN})`);
+  }
+  if (!isSafePositiveInt(n) || !isPowerOfTwo(n) || n < MIN_SCRYPT_N || n > MAX_SCRYPT_N) {
+    throw new Error(`Unsupported scrypt N: ${n}`);
+  }
+  if (!isSafePositiveInt(r) || r > MAX_SCRYPT_R) {
+    throw new Error(`Unsupported scrypt r: ${r}`);
+  }
+  if (!isSafePositiveInt(p) || p > MAX_SCRYPT_P) {
+    throw new Error(`Unsupported scrypt p: ${p}`);
+  }
+  if (!isEvenHexString(saltHex)) {
+    throw new Error('Invalid scrypt salt encoding');
+  }
+  const saltBytes = saltHex.length / 2;
+  if (saltBytes < MIN_SALT_BYTES || saltBytes > MAX_SALT_BYTES) {
+    throw new Error(`Unsupported scrypt salt length: ${saltBytes} bytes`);
+  }
+  if (!isEvenHexString(c.cipherparams.iv) || c.cipherparams.iv.length !== IV_BYTES * 2) {
+    throw new Error(`Invalid cipher IV: expected ${IV_BYTES} bytes`);
+  }
+  if (!isEvenHexString(c.ciphertext)) {
+    throw new Error('Invalid ciphertext encoding');
+  }
+
+  const salt = Buffer.from(saltHex, 'hex');
   const iv = Buffer.from(c.cipherparams.iv, 'hex');
   const ciphertext = Buffer.from(c.ciphertext, 'hex');
 
-  const derivedKey = scryptSync(Buffer.from(password, 'utf-8'), salt, c.kdfparams.dklen, {
-    N: c.kdfparams.n,
-    r: c.kdfparams.r,
-    p: c.kdfparams.p,
-    maxmem: 256 * c.kdfparams.n * c.kdfparams.r,
+  const derivedKey = scryptSync(Buffer.from(password, 'utf-8'), salt, dklen, {
+    N: n,
+    r,
+    p,
+    maxmem: 256 * n * r,
   });
 
   const computedMac = mac(derivedKey as Buffer, ciphertext);
@@ -118,7 +173,7 @@ export function decryptKeystore(keystore: KeystoreV3, password: string): `0x${st
     throw new Error('Incorrect password: MAC mismatch');
   }
 
-  const decipher = createDecipheriv(c.cipher, derivedKey.subarray(0, 16), iv);
+  const decipher = createDecipheriv(CIPHER, derivedKey.subarray(0, 16), iv);
   const privateKey = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 
   return `0x${privateKey.toString('hex')}`;
@@ -129,9 +184,18 @@ export async function readKeystoreFile(path: string): Promise<KeystoreV3> {
   return JSON.parse(content) as KeystoreV3;
 }
 
-export async function writeKeystoreFile(path: string, keystore: KeystoreV3): Promise<void> {
+export async function writeKeystoreFile(
+  path: string,
+  keystore: KeystoreV3,
+  options: { overwrite?: boolean } = {},
+): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify(keystore, null, 2) + '\n', { mode: 0o600 });
+  const flag = options.overwrite ? 'w' : 'wx';
+  await writeFile(path, JSON.stringify(keystore, null, 2) + '\n', {
+    mode: KEYSTORE_FILE_MODE,
+    flag,
+  });
+  await chmod(path, KEYSTORE_FILE_MODE);
 }
 
 export async function promptPassword(message: string): Promise<string> {

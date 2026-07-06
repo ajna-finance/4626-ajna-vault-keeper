@@ -79,7 +79,8 @@ describe('keeper run failure', () => {
 
   it('skips run if pool has bad debt', async () => {
     const borrower = '0x40ec5B33f54e0E8A33A975908C5BA1c14e5BbbDf';
-    const kickTime = BigInt(Math.floor(Date.now() / 1000)) - 259201n;
+    const latestBlock = await client.getBlock({ blockTag: 'latest' });
+    const kickTime = latestBlock.timestamp - 259201n;
 
     (request as any).mockResolvedValueOnce({
       liquidationAuctions: [{ borrower, kickTime: String(kickTime) }],
@@ -100,7 +101,8 @@ describe('keeper run failure', () => {
   });
 
   it('skips run if optimal bucket has recently been bankrupt', async () => {
-    const bankruptcyTime = BigInt(Math.floor(Date.now() / 1000) - 86400);
+    const latestBlock = await client.getBlock({ blockTag: 'latest' });
+    const bankruptcyTime = latestBlock.timestamp - 86400n;
     await setBankruptcyTime(bankruptcyTime);
 
     await arkRun(

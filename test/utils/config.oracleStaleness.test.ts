@@ -10,14 +10,14 @@ describe('config onchainMaxStaleness handling', () => {
     vi.doMock('fs', () => ({
       readFileSync: () => `{
         "chainId": 1,
-        "quoteTokenAddress": "0x1",
+        "quoteTokenAddress": "0x0000000000000000000000000000000000000001",
         "keeper": {
           "intervalMs": 1,
           "haltIfLupBelowHtp": true
         },
         "oracle": {
           "onchainPrimary": true,
-          "onchainAddress": "0x2",
+          "onchainAddress": "0x0000000000000000000000000000000000000002",
           "fixedPrice": null
         },
         "arkGlobal": {},
@@ -26,7 +26,7 @@ describe('config onchainMaxStaleness handling', () => {
         },
         "arks": [],
         "buffer": {
-          "address": "0x3",
+          "address": "0x0000000000000000000000000000000000000003",
           "allocation": 0
         },
         "minRateDiff": 10
@@ -41,7 +41,7 @@ describe('config onchainMaxStaleness handling', () => {
     vi.doMock('fs', () => ({
       readFileSync: () => `{
         "chainId": 1,
-        "quoteTokenAddress": "0x1",
+        "quoteTokenAddress": "0x0000000000000000000000000000000000000001",
         "keeper": {
           "intervalMs": 1,
           "haltIfLupBelowHtp": true
@@ -49,7 +49,7 @@ describe('config onchainMaxStaleness handling', () => {
         "oracle": {
           "apiUrl": "https://example.test",
           "onchainPrimary": false,
-          "onchainAddress": "0x2",
+          "onchainAddress": "0x0000000000000000000000000000000000000002",
           "fixedPrice": null
         },
         "arkGlobal": {},
@@ -58,7 +58,7 @@ describe('config onchainMaxStaleness handling', () => {
         },
         "arks": [],
         "buffer": {
-          "address": "0x3",
+          "address": "0x0000000000000000000000000000000000000003",
           "allocation": 0
         },
         "minRateDiff": 10
@@ -73,14 +73,14 @@ describe('config onchainMaxStaleness handling', () => {
     vi.doMock('fs', () => ({
       readFileSync: () => `{
         "chainId": 1,
-        "quoteTokenAddress": "0x1",
+        "quoteTokenAddress": "0x0000000000000000000000000000000000000001",
         "keeper": {
           "intervalMs": 1,
           "haltIfLupBelowHtp": true
         },
         "oracle": {
           "onchainPrimary": true,
-          "onchainAddress": "0x2",
+          "onchainAddress": "0x0000000000000000000000000000000000000002",
           "onchainMaxStaleness": null,
           "fixedPrice": null
         },
@@ -90,7 +90,7 @@ describe('config onchainMaxStaleness handling', () => {
         },
         "arks": [],
         "buffer": {
-          "address": "0x3",
+          "address": "0x0000000000000000000000000000000000000003",
           "allocation": 0
         },
         "minRateDiff": 10
@@ -105,14 +105,14 @@ describe('config onchainMaxStaleness handling', () => {
     vi.doMock('fs', () => ({
       readFileSync: () => `{
         "chainId": 1,
-        "quoteTokenAddress": "0x1",
+        "quoteTokenAddress": "0x0000000000000000000000000000000000000001",
         "keeper": {
           "intervalMs": 1,
           "haltIfLupBelowHtp": true
         },
         "oracle": {
           "onchainPrimary": true,
-          "onchainAddress": "0x2",
+          "onchainAddress": "0x0000000000000000000000000000000000000002",
           "onchainMaxStaleness": 0,
           "fixedPrice": null
         },
@@ -122,7 +122,7 @@ describe('config onchainMaxStaleness handling', () => {
         },
         "arks": [],
         "buffer": {
-          "address": "0x3",
+          "address": "0x0000000000000000000000000000000000000003",
           "allocation": 0
         },
         "minRateDiff": 10

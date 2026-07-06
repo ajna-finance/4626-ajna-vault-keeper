@@ -267,6 +267,25 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
   const quoteToken = config.quoteTokenAddress;
   const wallet = client.account.address;
 
+  // Probe the swap executor BEFORE any mutating tx. recoverCollateral is irreversible
+  // (rcv>0 pauses the vault until the full swap+refill pipeline completes), so a
+  // deployment without a real Bot 1 adapter must fail here — not after the vault is
+  // already paused with collateral stranded in the wallet. getSpender is a local,
+  // synchronous call; UnconfiguredSwapExecutor (the default) throws on it.
+  try {
+    swapExecutor.getSpender(collateralToken);
+  } catch (err) {
+    log.error(
+      {
+        event: 'recovery_blocked_swap_executor',
+        ark,
+        err: abridgedViemError(err),
+      },
+      'swap executor unavailable; blocking recovery before any on-chain action',
+    );
+    return;
+  }
+
   // Fail fast if the loaded wallet isn't the on-chain swapper for this vault.
   // Catches misconfigured env (wrong key, wrong vault, wrong chain) before any
   // recoverCollateral attempt wastes gas or reverts.

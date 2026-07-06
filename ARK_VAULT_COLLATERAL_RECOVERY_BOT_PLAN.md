@@ -2,9 +2,51 @@
 
 Status: approved for implementation
 Date: 2026-04-19
+Amended: 2026-07-06 — post-implementation corrections from review; see "Post-Implementation Amendments"
 Supersedes: `ARK_VAULT_COLLATERAL_RECOVERY_BOT_SPEC.md` (2026-04-06, proposed)
 Repo: `4626-ajna-vault-keeper`
 Target implementation: `../eb-vault-fork/4626-ajna-vault-keeper`
+
+## Post-Implementation Amendments (2026-07-06)
+
+Review of the implemented bot (PR #20) confirmed several defects in this plan itself.
+The affected sections below have been corrected inline; this list is the summary of
+what changed and why:
+
+1. **Keep `optimalBucketHasCollateral`** — this plan ordered its removal as dead code.
+   Wrong: it guards the DESTINATION bucket's total collateral (any owner), which the
+   vault-LP-based `detectRecoverable` cannot see. Both checks stay. (§Repo
+   Implementation Plan → arkKeeper.)
+2. **Refill dust gate had the wrong basis** — gate 3 checked pool-total bucket LP and
+   compared the deposit amount against `LP_DUST`, but the contract's `DustyBucket`
+   check is on the VAULT'S OWN LP after minting. Corrected, with a minted-LP estimate.
+   (§Refill Bucket Pre-check.)
+3. **`expectedQuoteOut` is sourced from `removedCollateralValue`**, not
+   `poolInfoUtils.lpToQuoteTokens` — rcv IS the quote-WAD value the vault is owed at
+   the recovery price; projecting remaining LP measured the wrong thing. It is a
+   quote-denominated WAD, and the `SwapExecutor` interface now documents its units
+   contract. (§Bot-to-Bot Interface, §Planned Recovery Flow.)
+4. **Detection has a materiality floor** — `recovery.minRecoveryValueWad` (quote-WAD,
+   default 1e15 = 0.001 quote token, per-ark override). Without it, a permissionless
+   1-wei `addCollateral` halts arkKeeper every tick and walks recovery-auto into a
+   stranded `rcv > 0` pause. (§Detection rule, §Repo Implementation Plan → config.)
+5. **Swap executor is probed in preflight** — `getSpender()` is validated before any
+   mutating tx so an unconfigured Bot 1 adapter blocks loudly
+   (`recovery_blocked_swap_executor`) instead of after `recoverCollateral` has already
+   paused the vault. (§Planned Recovery Flow.)
+6. **`recovery-oneshot` exit code carries the outcome** — exits non-zero unless every
+   enabled ark needed no operator attention. (§Process Model, §Runbook 2.)
+7. **Bankruptcy recency uses chain time** — `bankruptcyTime` is a block timestamp, so
+   the gate reads `getChainTime()`, failing closed with reason
+   `chain_time_unavailable`. Swap deadlines and alert-dedup windows stay wall-clock.
+8. **Event taxonomy expanded** — the implemented alert set is larger than the original
+   nine events. (§Logging and Alerts.)
+9. **Startup checks are BOT_MODE-gated** — the metavault allocator checks assume the
+   scheduler's keeper wallet and only run in `scheduler` mode; recovery modes run with
+   the swapper wallet (or none in `recovery-detect`). (§Process Model.)
+10. **Wallet dust floors are decimals-aware** — the collateral-side floor scales with
+    the collateral token's decimals (micro-token, min 1 raw unit, capped at 1000 raw
+    units); the quote-side floor remains ~0.001 quote tokens. (§Recovery State Machine.)
 
 ## Purpose
 
@@ -140,7 +182,7 @@ Events are emitted as pino structured logs to stdout. External log aggregators (
 Responsibilities:
 - maintain buffer ratio and bucket placement during normal operation for one ark
 - perform a cheap full-bucket collateral check (reads only) before any mutating tx — acts as a bail-out gate
-- exit via existing `logRunExit` when collateral is detected, preserving the current `ark_run_aborted` ERROR event taxonomy
+- exit via the existing run-abort path (`abortRun`, formerly `logRunExit`) when collateral is detected, preserving the current `ark_run_aborted` ERROR event taxonomy
 
 Non-responsibilities:
 - no collateral withdrawal
@@ -198,7 +240,7 @@ Non-responsibilities:
 
 Ark keeper and recovery keeper are NOT directly coordinated. They independently derive behavior from on-chain state:
 
-- arkKeeper calls `detectRecoverable(vault)` (from `src/ark/recovery.ts`) as a bail-out gate. On positive detection, it exits via existing `logRunExit` — emitting the familiar `ark_run_aborted` ERROR log. It does NOT emit `collateral_recovery_required`.
+- arkKeeper calls `detectRecoverable(vault, { minValueWad })` (from `src/ark/recovery.ts`) as a bail-out gate. On positive detection, it exits via the existing run-abort path (`abortRun`) — emitting the familiar `ark_run_aborted` ERROR log. It does NOT emit `collateral_recovery_required`.
 - recoveryKeeper calls the SAME `detectRecoverable(vault)` function. On positive detection, it emits `collateral_recovery_required` (subject to in-memory dedup) and, in auto / oneshot modes, proceeds to execute.
 
 Both read the same chain state via the same helper, so detection is consistent. Event emission is single-sourced in recoveryKeeper, eliminating cross-process dup-alerting.
@@ -252,6 +294,17 @@ Edge cases (handled naturally):
 - **Bankruptcy buckets:** `lpToCollateral` returns 0 (bankruptcy zeroed LP value); excluded.
 - **Pure quote buckets:** `lpToCollateral` returns 0 (no collateral to recover); excluded.
 - **Rounding:** down; underestimates but does not produce false positives.
+
+**Materiality floor (amended 2026-07-06).** A candidate must additionally be worth at
+least `recovery.minRecoveryValueWad` (quote-WAD; default 1e15 = 0.001 quote token;
+per-ark override) — valued as `estimatedCollateralWad × bucketPrice / WAD`, the same
+pricing `recoverCollateral` itself uses to set `removedCollateralValue`. Without the
+floor, anyone can permissionlessly `addCollateral` 1 wei into a bucket where the vault
+holds LP, halting arkKeeper on every tick; and recovery-auto would recover the dust
+(`rcv > 0`, vault paused), skip the swap, and strand at `no_quote_to_refill`. Both
+keepers apply the floor through the shared `detectRecoverable` helper, so detection
+stays consistent. Collateral below the floor deliberately sits untouched in the bucket
+— it is accepted dust, not a recovery condition.
 
 `vault.getBuckets()` is trusted as the authoritative bucket set for liquidation recovery. Ajna liquidation converts LP TYPE within already-tracked buckets; it does not create new untracked buckets. Migration / legacy bucket state is explicitly out of scope (see `TODOS.md` entry).
 
@@ -325,41 +378,55 @@ type SwapQuoteRequest = {
   chainId: number;
   tokenIn: `0x${string}`;
   tokenOut: `0x${string}`;
-  amountIn: bigint;
-  maxSlippageBps: number;          // DEX slippage tolerance
-  maxValueLossBps: number;         // additional vault-value loss threshold (Bot 3 enforces)
-  expectedQuoteOut: bigint;        // from poolInfoUtils.lpToQuoteTokens
+  amountIn: bigint;                // RAW tokenIn units (tokenIn decimals)
+  maxSlippageBps: number;          // DEX slippage tolerance (bps)
+  maxValueLossBps: number;         // additional vault-value loss threshold (Bot 3 enforces; bps)
+  expectedQuoteOut: bigint;        // QUOTE-DENOMINATED WAD (1e18) — carries removedCollateralValue
   recipient: `0x${string}`;        // must be the recovery wallet
-  deadline: bigint;                // unix timestamp
+  deadline: bigint;                // unix timestamp (seconds)
 };
 
 type SwapQuoteResult = {
-  expectedAmountOut: bigint;
-  minAmountOut: bigint;
+  expectedAmountOut: bigint;       // RAW tokenOut units
+  minAmountOut: bigint;            // RAW tokenOut units
   routeId: string;                 // correlation key for retry detection
-  validUntil: bigint;
+  validUntil: bigint;              // unix timestamp (seconds)
 };
 
 type SwapExecutionResult = {
-  amountIn: bigint;
-  amountOut: bigint;
-  minAmountOut: bigint;
+  amountIn: bigint;                // RAW tokenIn units
+  amountOut: bigint;               // RAW tokenOut units
+  minAmountOut: bigint;            // RAW tokenOut units
   txHash: `0x${string}`;
   routeId: string;
   recipient: `0x${string}`;
 };
 
 interface SwapExecutor {
+  // Address that must hold the ERC20 allowance from the bot wallet to pull tokenIn.
+  // Probed by Bot 3 in preflight BEFORE any mutating tx (amended 2026-07-06): an
+  // unconfigured adapter must fail here, not after recoverCollateral has paused the vault.
+  getSpender(tokenIn: `0x${string}`): `0x${string}`;
   quoteExactIn(input: SwapQuoteRequest): Promise<SwapQuoteResult>;
   executeExactIn(input: SwapQuoteRequest & { priorTxHash?: `0x${string}` }): Promise<SwapExecutionResult>;
 }
 ```
 
+**Units contract (amended 2026-07-06).** The interface mixes two decimal bases and the
+split is invisible with an 18-decimal quote token: `amountIn` / `amountOut` /
+`minAmountOut` are raw token units in each token's own decimals, while
+`expectedQuoteOut` is a quote-denominated WAD carrying `removedCollateralValue` — NOT
+`lpToQuoteTokens` output as this plan originally said, and NOT tokenOut native units.
+rcv is the quote value the vault is owed at the recovery price, which is exactly what
+the swap must produce; projecting the vault's remaining LP measured the wrong thing.
+Bot 3 enforces the value-loss threshold against this WAD figure itself; adapters must
+not derive `minAmountOut` from it without rescaling by `10^(tokenOutDecimals-18)`.
+
 Bot 3 responsibilities around the swap:
 - Snapshot `walletBalanceBefore = ERC20(tokenIn).balanceOf(recovery wallet)` AND `walletQuoteBefore = ERC20(tokenOut).balanceOf(recovery wallet)` immediately before `executeExactIn`
-- Pass `expectedQuoteOut = poolInfoUtils.lpToQuoteTokens(pool, totalVaultLps, refillBucketIndex)`
-- After `executeExactIn`, compute `actualAmountOut = ERC20(tokenOut).balanceOf(recovery wallet) - walletQuoteBefore`
-- If `actualAmountOut < expectedQuoteOut * (10000 - maxValueLossBps) / 10000`, emit `recovery_swap_value_loss_exceeded` and HALT (do not proceed to returnQuoteToken with the under-valued output)
+- Pass `expectedQuoteOut = removedCollateralValue` (quote-WAD; amended 2026-07-06 — see the units contract above)
+- After `executeExactIn`, compute `actualAmountOut = ERC20(tokenOut).balanceOf(recovery wallet) - walletQuoteBefore`, then convert to WAD before comparing
+- If `actualAmountOutWad < expectedQuoteOut * (10000 - maxValueLossBps) / 10000`, emit `recovery_swap_value_loss_exceeded` and HALT (do not proceed to returnQuoteToken with the under-valued output)
 - Use `actualAmountOut` (not swap receipt's `amountOut`) as the return amount — fee-on-transfer tokens may report higher than delivered
 - If the swap transaction is resubmitted on retry, pass the `priorTxHash` so Bot 1 can correlate; adapter returns existing result instead of executing a second swap
 
@@ -396,6 +463,15 @@ Interpretation rules (derived from `AUTH.paused()`, `removedCollateralValue`, an
 | false | > 0 | 0 | 0 | NO_BALANCE (operator funds wallet or aborts) |
 | true | 0 | — | — | BLOCKED_ADMIN_PAUSE |
 | true | > 0 | — | — | ADMIN_PAUSED_DURING_RECOVERY (can finish returnQuoteToken) |
+
+Wallet balances are dust-normalized before stage derivation, otherwise a 1-wei
+transfer to the swapper wallet flips a legitimate RECOVERED into
+PARTIAL_SWAP_AMBIGUOUS and halts recovery. Floors (amended 2026-07-06 to be
+decimals-aware on the collateral side): quote — `assetScale / 1000` (~0.001 quote
+tokens); collateral — one micro-token (`10^decimals / 1e6`), at least 1 raw unit,
+capped at 1000 raw units so high-decimal tokens keep the historical 1000-wei floor
+(raising it would open a gap between the detection value floor and the swap-skip floor
+where a recovery could strand with `rcv > 0`).
 
 ## Concurrency
 
@@ -436,37 +512,36 @@ For each configured ark:
 1. Acquire ark lock (skip if held)
 2. **Preflight:** read `authPaused`, `removedCollateralValue`, wallet balances
 3. **Blocked-admin-pause check:** if `authPaused == true` and `removedCollateralValue == 0`, emit `recovery_blocked_admin_pause` and return
-4. **Recovery stage (if `removedCollateralValue == 0`):**
-   1. Run detection preflight; if no candidates, return (no-op)
+4. **Swap-executor probe (amended 2026-07-06):** call `swapExecutor.getSpender(collateralToken)` (local, synchronous) BEFORE any mutating tx; on throw, emit `recovery_blocked_swap_executor` and return. `recoverCollateral` is irreversible — a missing Bot 1 adapter must fail here, not after the vault is already recovery-paused with collateral stranded in the wallet. Preflight also verifies the loaded wallet is the on-chain swapper (`recovery_wallet_role_mismatch`), that `vault.AUTH()` matches config (`recovery_auth_drift`), and that the wallet holds no material pre-existing balances (`recovery_wallet_contaminated`).
+5. **Recovery stage (if `removedCollateralValue == 0`):**
+   1. Run detection preflight (including the materiality floor); if no candidates, return (no-op)
    2. Emit `recovery_step` (step: `'started'`)
    3. Snapshot wallet collateral balance before
    4. Call `recoverCollateral(indexes[], amts[])` with gas buffer; await receipt
    5. Compute `actualRecoveredCollateral = walletCollateralAfter - walletCollateralBefore`
    6. Emit `recovery_recovered_collateral` with actual amount
-5. **Swap stage:**
+6. **Swap stage:**
    1. Read collateral token address from `pool.collateralAddress()` (via vault wrapper)
-   2. Compute `expectedQuoteOut = poolInfoUtils.lpToQuoteTokens(pool, totalVaultLps, refillBucketIndex)`
+   2. Set `expectedQuoteOut = removedCollateralValue` (quote-WAD; amended 2026-07-06 — rcv is the value the vault is owed at the recovery price)
    3. Call `swapExecutor.quoteExactIn(...)`, enforcing `minAmountOut` and passing `maxValueLossBps` + `expectedQuoteOut`
    4. Emit `recovery_step` (step: `'swap_quoted'`)
-   5. Approve collateral to swap adapter (exact amount, reset-to-zero if stale — see TODOS.md)
+   5. Approve collateral to `swapExecutor.getSpender(tokenIn)` (exact amount, reset-to-zero if stale — see TODOS.md; a spender equal to the bot wallet is rejected as `invalid_spender`)
    6. Snapshot wallet quote balance before
    7. Call `swapExecutor.executeExactIn(...)` with `deadline` and `routeId`
    8. On revert / deadline / min-out failure: emit `recovery_swap_failed` with `reason` and HALT
-   9. Compute `actualAmountOut = walletQuoteAfter - walletQuoteBefore`
-   10. If `actualAmountOut < expectedQuoteOut * (10000 - maxValueLossBps) / 10000`: emit `recovery_swap_value_loss_exceeded` and HALT
+   9. Compute `actualAmountOut = walletQuoteAfter - walletQuoteBefore`, convert to WAD
+   10. If `actualAmountOutWad < expectedQuoteOut * (10000 - maxValueLossBps) / 10000`: emit `recovery_swap_value_loss_exceeded` and HALT
    11. Emit `recovery_swap_executed` with `actualAmountOut`
-6. **Refill bucket pre-check:**
-   1. Determine `refillBucket = ark.recovery?.refillBucketOverride ?? vaultAuth.minBucketIndex()`
-   2. Read `bucketInfo(refillBucket)` and `vault.LP_DUST()`
-   3. If `bankruptcyTime > 0 AND (now - bankruptcyTime < arkGlobal.minTimeSinceBankruptcy)`: emit `recovery_refill_failed` (reason: `'recently_bankrupt'`) and HALT
-   4. If `bucketInfo.lps == 0 AND actualAmountOut < LP_DUST`: emit `recovery_refill_failed` (reason: `'below_dust'`) and HALT (operator funds recovery wallet, bot resumes)
-   5. If `actualAmountOut / expected_lp_minted < recovery.minLpMintedBps`: emit `recovery_refill_failed` (reason: `'poor_exchange_rate'`) and HALT
-7. **Refill stage:**
+7. **Refill bucket pre-check (amended 2026-07-06 — see §Refill Bucket Pre-check for the corrected gates):**
+   1. Determine `refillBucket = ark.recovery?.refillBucketOverride ?? vaultAuth.minBucketIndex()`; reject an override below `minBucketIndex` pre-flight (`recovery_refill_bucket_override_invalid`)
+   2. Read `bucketInfo(refillBucket)`, the vault's own LP in that bucket (`pool.lenderInfo`), `vault.LP_DUST()`, and chain time (`getChainTime()`; on failure emit `recovery_refill_failed` reason `'chain_time_unavailable'` and HALT — `bankruptcyTime` is a block timestamp, so wall clock must not gate it)
+   3. Apply the gates in order: `recently_bankrupt`, `bucket_lp_dangerous`, `no_quote_to_refill`, `below_dust` (vault-LP-after-mint basis), then `poor_exchange_rate`; on any failure emit `recovery_refill_failed` with the reason and HALT
+8. **Refill stage:**
    1. Approve quote token to vault (exact amount, reset-to-zero if stale)
    2. Emit `recovery_step` (step: `'refill_started'`)
    3. Call `returnQuoteToken(refillBucket, actualAmountOut)` with gas buffer
    4. On revert: emit `recovery_refill_failed` (reason: `'revert'`) with decoded error
-8. **Accounting reconciliation (after refill succeeds):**
+9. **Accounting reconciliation (after refill succeeds):**
    1. Read `removedCollateralValue` (should be 0)
    2. Read `authPaused`
    3. Read wallet collateral + quote balances
@@ -486,13 +561,16 @@ Rationale for default:
 - Avoids inventing a second "very low bucket" policy surface
 - Smallest diff from existing vault policy
 
-Pre-check gates (applied in order before `returnQuoteToken`, all share the `recovery_refill_failed` event with distinct `reason` values):
+Pre-check gates (amended 2026-07-06; applied in order before `returnQuoteToken`, all share the `recovery_refill_failed` event with distinct `reason` values). The `now` used below is CHAIN time (`getChainTime()`); if it cannot be read, the run fails closed → `reason: 'chain_time_unavailable'`.
+
 1. Not admin-paused (defensive; state machine should already have prevented reaching this point)
 2. Not recently bankrupt (`bankruptcyTime > 0` AND `now - bankruptcyTime < arkGlobal.minTimeSinceBankruptcy`) → `reason: 'recently_bankrupt'`
-3. Not below dust on empty bucket (`bucketInfo.lps == 0 AND amount < LP_DUST`) → `reason: 'below_dust'`
-4. Exchange rate produces meaningful LP (`actualAmountOut / expected_lp_minted >= recovery.minLpMintedBps`) → `reason: 'poor_exchange_rate'`
+3. Pool-total bucket LP not in the `_validDestination` danger zone (`0 < bucketInfo.lps <= 1_000_000` reverts `BucketLPDangerous`) → `reason: 'bucket_lp_dangerous'`
+4. Something to return (`amount > 0` — Stage 2 skipped on sub-dust collateral or wallet externally swept means `returnQuoteToken(bucket, 0)` would strand `rcv > 0`) → `reason: 'no_quote_to_refill'`
+5. Vault LP after mint clears dust. **Corrected basis:** the contract's `DustyBucket` check (`AjnaVaultLibrary._fill`) is on the VAULT'S OWN LP after minting — `lps[bucket] += minted; revert if < LP_DUST` — not pool-total LP and not the deposit amount. This plan's original gate (`bucketInfo.lps == 0 AND amount < LP_DUST`) waved through any bucket holding other lenders' LP, and the tx then reverted on-chain as a generic `'revert'`. The gate is now `vaultLps(refillBucket) + estimatedMintedLp < LP_DUST` → `reason: 'below_dust'`, where `estimatedMintedLp = amount * minLpMintedBps / 10000` for pure-quote buckets (gate 6 guarantees that bound on every path that reaches the tx; the ~1% margin also absorbs Ajna's deposit fee) and the full `amount` for mixed buckets (no reliable bound — an extreme-rate mixed bucket can still revert on-chain as `'revert'`).
+6. Exchange rate produces meaningful LP (`round-trip quote / amount >= recovery.minLpMintedBps`; pure-quote buckets only) → `reason: 'poor_exchange_rate'`
 
-Each gate halts the flow. One alert event, four reason codes (including `'revert'` for any other returnQuoteToken failure).
+Each gate halts the flow. One alert event, seven reason codes (`'recently_bankrupt'`, `'bucket_lp_dangerous'`, `'no_quote_to_refill'`, `'below_dust'`, `'poor_exchange_rate'`, `'chain_time_unavailable'`, plus `'revert'` for any other returnQuoteToken failure).
 
 ## Operator Runbooks
 
@@ -514,7 +592,7 @@ Each gate halts the flow. One alert event, four reason codes (including `'revert
    - proposed refill bucket
    - `authPaused` / `removedCollateralValue`
 4. Operator triggers recovery execution by invoking `BOT_MODE=recovery-oneshot` (via cron, manual command, or CI job)
-5. `recoveryKeeper` runs end-to-end for configured arks once and exits
+5. `recoveryKeeper` runs end-to-end for configured arks once and exits. **The exit code carries the outcome (amended 2026-07-06):** 0 only when every enabled ark either had nothing to recover or completed cleanly; 1 when any ark was blocked or failed (`recovery_oneshot_incomplete` is logged alongside the per-ark failure event). Scripts may safely chain `recovery-oneshot && next-step`.
 6. `arkKeeper` resumes on next tick automatically
 7. `metavaultKeeper` resumes normal allocation once the ark is no longer paused
 
@@ -522,7 +600,7 @@ Each gate halts the flow. One alert event, four reason codes (including `'revert
 
 1. `recoveryKeeper` (BOT_MODE=recovery-auto, continuous) detects collateral, emits `collateral_recovery_required`, and auto-executes if preflight passes
 2. `arkKeeper` in the scheduler deployment bails silently with `ark_run_aborted` until the ark is no longer paused
-3. Operator is notified only on failure (`recovery_swap_value_loss_exceeded`, `recovery_swap_failed`, `recovery_refill_failed`, `recovery_blocked_admin_pause`, `recovery_state_mismatch`) or completion (`recovery_completed` — check `adminPausePending` field)
+3. Operator is notified only on failure (`recovery_swap_value_loss_exceeded`, `recovery_swap_failed`, `recovery_refill_failed`, `recovery_blocked_admin_pause`, `recovery_blocked_swap_executor`, `recovery_state_mismatch`, `recovery_wallet_contaminated`, `recovery_wallet_role_mismatch`, `recovery_auth_drift`, `recovery_tx_failed`) or completion (`recovery_completed` — check `adminPausePending` field)
 
 ### 4. Manual admin pause is active before recovery
 
@@ -548,10 +626,13 @@ Action:
 ### 6. `returnQuoteToken(...)` fails
 
 Action:
-- `recovery_refill_failed` fires with a `reason` field:
-  - `'below_dust'` — pre-check caught dust amount on empty bucket (operator funds recovery wallet to top up)
+- `recovery_refill_failed` fires with a `reason` field (amended 2026-07-06):
+  - `'below_dust'` — pre-check: vault LP after mint would land under `LP_DUST` (operator funds recovery wallet to top up, or picks a bucket where the vault already holds LP)
   - `'recently_bankrupt'` — pre-check caught bankruptcy state on target bucket (operator picks a different bucket via `refillBucketOverride`)
+  - `'bucket_lp_dangerous'` — pre-check: pool-total bucket LP in the `BucketLPDangerous` range, 1..1_000_000 (operator picks a different bucket)
+  - `'no_quote_to_refill'` — wallet holds no quote token with `rcv > 0`; Stage 2 was skipped or the wallet was swept (operator investigates/funds)
   - `'poor_exchange_rate'` — pre-check caught impaired bucket (operator picks a different bucket)
+  - `'chain_time_unavailable'` — could not read chain time to evaluate the bankruptcy gate; fail-closed, no tx sent (operator checks RPC health)
   - `'revert'` — returnQuoteToken reverted for unknown reason (decoded error in payload; operator investigates)
 - Vault remains paused via `removedCollateralValue > 0`
 - Operator reads the `reason` field to decide how to respond
@@ -593,9 +674,15 @@ Single binary with `BOT_MODE` dispatch in `src/index.ts`. Four modes:
 | `scheduler` | Existing scheduler tick (metavault + per-ark arkRun). Default. |
 | `recovery-detect` | Continuous detection-only loop across configured arks; emits alerts, no txs. |
 | `recovery-auto` | Continuous detect + execute loop across configured arks with auto-execute. |
-| `recovery-oneshot` | Detect + execute across configured arks for one pass, then exit. Operator trigger for semi-auto mode. |
+| `recovery-oneshot` | Detect + execute across configured arks for one pass, then exit. Operator trigger for semi-auto mode. Exit code 0 only when every enabled ark needed no attention; otherwise 1 (amended 2026-07-06). |
 
 No new `package.json` scripts. Existing `pnpm start` remains the single entry point; deployments set `BOT_MODE` via container env. README documents the valid values. Mode is an operator / deployment concern, not a script choice.
+
+Startup checks are BOT_MODE-gated (amended 2026-07-06): chain-id verification runs in
+every mode, but the metavault allocator/strategy checks assume the SCHEDULER's keeper
+wallet and only run for `BOT_MODE=scheduler` — recovery modes sign with the swapper
+wallet (or, in `recovery-detect`, no wallet at all) and would fail those checks at
+every startup.
 
 Dockerfile: retains single `CMD ["node", "dist/index.js"]`; `BOT_MODE` is passed at container invocation time via env. Each deployment (k8s Deployment, docker-compose service, etc.) sets its own `BOT_MODE`.
 
@@ -628,12 +715,15 @@ Types colocated with consumers — matches the existing repo convention (`src/ke
 `src/utils/config.ts` — add recovery config block at the top level and extend `ArkConfig` for per-ark overrides (matches the existing `arks[].optimalBucketDiff` pattern):
 
 ```ts
-// top-level recovery defaults
+// top-level recovery defaults (amended 2026-07-06: swapDeadlineSec, minRecoveryValueWad)
 recovery: {
   dedupWindowMs?: number;                // default 3_600_000 (1h)
   maxSlippageBps?: number;               // default 50 (0.5%)
   maxValueLossBps?: number;              // default 100 (1%)
   minLpMintedBps?: number;               // default 9900 (99%)
+  swapDeadlineSec?: number;              // default 300; swap deadline horizon (wall clock)
+  minRecoveryValueWad?: string;          // default '1000000000000000' (1e15 = 0.001 quote token);
+                                         // detection materiality floor, quote-WAD
 };
 
 // per-ark overrides extend the existing ArkConfig array element
@@ -641,9 +731,10 @@ type ArkConfig = {
   // ... existing fields (address, vaultAddress, allocation, optimalBucketDiff, etc.) ...
   recovery?: {
     enabled?: boolean;                   // default true; set false to opt this ark out of recovery-auto
-    refillBucketOverride?: bigint;
+    refillBucketOverride?: string;       // bigint string, 0..7388 (AJNA_MAX_FENWICK_INDEX)
     maxSlippageBps?: number;             // overrides top-level
     maxValueLossBps?: number;            // overrides top-level
+    minRecoveryValueWad?: string;        // overrides top-level
   };
 };
 ```
@@ -653,13 +744,18 @@ Design notes:
 - `BOT_MODE` env is the single source of truth for mode — no `mode` override in config
 - Per-ark nesting matches existing per-ark override pattern; no new config shape to learn
 
-Validation: `maxSlippageBps`, `maxValueLossBps`, and `minLpMintedBps` must be 0-10000.
+Validation: `maxSlippageBps` must be 0-1000, `maxValueLossBps` 0-5000, `minLpMintedBps`
+0-9999 (10000 is mathematically unachievable and would halt every refill),
+`swapDeadlineSec` 60-3600, `minRecoveryValueWad` a non-negative bigint string,
+`refillBucketOverride` a valid Ajna bucket index (0-7388). Duplicate
+`arks[].vaultAddress` entries are rejected — recovery runs per-vault, and a vault
+listed twice would be double-operated.
 
 `src/utils/scheduler.ts` — extend to respect `BOT_MODE`:
 - `scheduler`: existing flow
 - `recovery-detect`: continuous loop calling `recoveryKeeper.detectOnly(ark)` for each configured ark
 - `recovery-auto`: continuous loop calling `recoveryKeeper.execute(ark)` for each configured ark
-- `recovery-oneshot`: single-pass `recoveryKeeper.execute(ark)` for each ark, then process.exit(0)
+- `recovery-oneshot`: single-pass `recoveryKeeper.execute(ark)` for each ark, then exit — code 0 only when every enabled ark needed no attention, else 1 (amended 2026-07-06)
 
 `src/utils/env.ts` — per-mode wallet requirement (same env var names as today):
 - `scheduler`, `recovery-auto`, `recovery-oneshot`: require `PRIVATE_KEY` or `KEYSTORE_PATH` (existing)
@@ -670,10 +766,10 @@ Validation: `maxSlippageBps`, `maxValueLossBps`, and `minLpMintedBps` must be 0-
 
 `src/keepers/arkKeeper.ts`:
 - Move the collateral check earlier in the flow — after `isPaused` and `poolHasBadDebt` checks, BEFORE `updateInterest` and `drain` (saves gas on every tick where recovery is needed)
-- Replace the call to `optimalBucketHasCollateral(data)` at line 73 with a call to `detectRecoverable(vault)` from `src/ark/recovery.ts` (shared helper with recoveryKeeper)
-- If `detectRecoverable` returns a non-empty candidate set, call existing `logRunExit` with reason `"collateral detected, recovery required"` — preserves the current `ark_run_aborted` ERROR event taxonomy and keeps existing dashboards/alerts working
-- Remove the now-unused `optimalBucketHasCollateral` helper (it becomes dead code)
-- No new event emission from arkKeeper, no new helper function. Smaller diff than the pre-simplification design.
+- Add a call to `detectRecoverable(vault, { minValueWad })` from `src/ark/recovery.ts` (shared helper with recoveryKeeper) as that early preflight
+- If `detectRecoverable` returns a non-empty candidate set, abort via the existing run-exit path with reason `"collateral detected, recovery required"` — preserves the current `ark_run_aborted` ERROR event taxonomy and keeps existing dashboards/alerts working
+- **KEEP `optimalBucketHasCollateral` (amended 2026-07-06** — this plan originally ordered its removal as dead code, which was wrong**):** the two checks guard different invariants. `detectRecoverable` is vault-LP-based — it only sees buckets where the vault already holds LP that redeems to collateral. `optimalBucketHasCollateral` checks the DESTINATION bucket's total collateral (any owner): the optimal bucket is a price-derived target the vault typically holds no LP in yet, and without this guard the keeper would deposit quote into a collateral-contaminated bucket and acquire collateral exposure. Both stay.
+- No new event emission from arkKeeper, no new helper function.
 
 ### ABI updates
 
@@ -730,23 +826,34 @@ Validation: `maxSlippageBps`, `maxValueLossBps`, and `minLpMintedBps` must be 0-
 
 ## Logging and Alerts
 
-Structured events are grouped into **alertable events** (things operators route on) and a **debug trace event** (internal progress, no alerting).
+Structured events are grouped into **alertable events** (things operators route on) and **non-alert events** (progress traces and deduped housekeeping warnings).
 
-### Alertable events (9)
+### Alertable events
 
-- `collateral_recovery_required` — detection found recoverable collateral
+(Amended 2026-07-06 — the implemented taxonomy is larger than the original nine events.)
+
+- `collateral_recovery_required` — detection found recoverable collateral (above the materiality floor)
 - `recovery_recovered_collateral` — `recoverCollateral` succeeded, payload has `actualRecoveredCollateral`
 - `recovery_swap_executed` — swap succeeded, payload has `actualAmountOut` (pre/post balance delta)
-- `recovery_swap_failed` — swap tx reverted or deadline expired; payload has `reason` (`'revert'` | `'deadline_expired'` | `'min_out_not_met'`)
+- `recovery_swap_failed` — swap stage failed; payload has `reason` (`'quote_failed'` | `'invalid_spender'` | `'revert'` — adapter-side deadline / min-out failures surface through the adapter's throw and land under `'revert'` with the error in the payload)
 - `recovery_swap_value_loss_exceeded` — swap succeeded but output below vault-value threshold; refill NOT attempted
-- `recovery_refill_failed` — `returnQuoteToken` did not land; payload has `reason` (`'below_dust'` | `'recently_bankrupt'` | `'poor_exchange_rate'` | `'revert'`)
+- `recovery_refill_failed` — `returnQuoteToken` did not land; payload has `reason` (`'recently_bankrupt'` | `'bucket_lp_dangerous'` | `'no_quote_to_refill'` | `'below_dust'` | `'poor_exchange_rate'` | `'chain_time_unavailable'` | `'revert'`)
+- `recovery_refill_bucket_override_invalid` — configured `refillBucketOverride` is below `AUTH.minBucketIndex()`; would revert on-chain
 - `recovery_blocked_admin_pause` — `AUTH.paused()` blocks fresh recovery
+- `recovery_blocked_swap_executor` — preflight probe found no working swap adapter; no tx sent
+- `recovery_wallet_role_mismatch` — loaded wallet is not the on-chain swapper; no tx sent
+- `recovery_auth_drift` — `vault.AUTH()` does not match config `vaultAuthAddress`; pause/swapper reads untrustworthy
+- `recovery_wallet_contaminated` — swapper wallet holds material pre-existing balance with `rcv == 0`; operator must sweep
+- `recovery_tx_failed` — a recovery tx (recoverCollateral / returnQuoteToken) failed to land; payload has `action`
 - `recovery_completed` — full flow complete; payload has `adminPausePending: boolean` (true if `AUTH.paused()` is still true post-`returnQuoteToken`)
-- `recovery_state_mismatch` — concurrency guard: state doesn't match expected pre-condition
+- `recovery_state_mismatch` — concurrency guard: state doesn't match expected pre-condition (includes PARTIAL_SWAP_AMBIGUOUS / NO_BALANCE resume states)
+- `recovery_oneshot_incomplete` — scheduler-level: a `recovery-oneshot` pass had at least one ark needing attention; process exits 1
 
-### Debug trace event (1)
+### Non-alert events
 
-- `recovery_step` — internal progress; payload has `step` (`'preflight_passed'` | `'started'` | `'swap_quoted'` | `'refill_started'` | `'resume_detected'`). Emitted at debug level; not intended for alerting.
+- `recovery_step` — internal progress trace; payload has `step` (`'started'` | `'swap_quoted'` | `'refill_started'` | `'resume_detected'`). Not intended for alerting.
+- `recovery_wallet_dust` — sub-material balance sitting in the swapper wallet (warn; deduped per `dedupWindowMs`); operator should sweep eventually
+- `recovery_skipped` — ark skipped this tick (`disabled_by_config` from the scheduler, `keeper_halted` from the halt guard)
 
 ### Common payload fields on all events
 
@@ -840,7 +947,13 @@ Outstanding:
 
 ### 3. Mock updates (in-place, migrate callers)
 
-**Status: TODO for implementer.** Precise changes specified under "Mock updates" section above. Four Solidity files + four ABI twins + rename of `setPaused` helper in `test/helpers/vaultHelpers.ts` + any test files that import it.
+**Status: DONE** (amended 2026-07-06). Landed with the implementation. Note one
+correction beyond the original spec: `MockVault.recoverCollateral` records
+`removedCollateralValue` as the QUOTE-denominated WAD value at each bucket's price
+(`(_amts[i] * indexToPrice[_fromIndexes[i]]) / 1e18`), matching the real vault's
+`(_gems * _price) / WAD` — not the raw collateral sum. The keeper's value-loss guard
+treats rcv as the quote value the swap must produce, so a raw-sum mock would have
+validated future guard tests with wrong units whenever collateral price != 1 quote.
 
 ### 4. Spec corrections (this document)
 

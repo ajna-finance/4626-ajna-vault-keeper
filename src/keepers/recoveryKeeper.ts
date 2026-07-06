@@ -82,15 +82,25 @@ const dedupStore = new Map<string, number>();
 // Separate store for dust warnings so they don't compete with real alerts for LRU slots.
 const dustDedupStore = new Map<string, number>();
 
-// Collateral dust floor (wei): no general-purpose dust concept for arbitrary collateral
-// tokens, so use a conservative absolute floor that dwarfs accidental 1-wei sends but is
-// negligible for real recovery amounts. Paired with QUOTE_DUST_DIVISOR inside runExecute
-// because the quote-side floor needs per-asset decimals scaling.
-const COLLATERAL_DUST_FLOOR = 1000n;
 // Quote-token dust floor divisor against assetScale: yields ~0.001 token units (e.g.
-// 1000 wei USDC = $0.001, 1e15 wei DAI ≈ $0.001). Matches the collateral floor's blast
-// radius across decimals so a 1-wei DoS is impossible on either side.
+// 1000 wei USDC = $0.001, 1e15 wei DAI ≈ $0.001). The quote token is ~$1-valued in this
+// protocol, so a token-count floor is also a value floor.
 const QUOTE_DUST_DIVISOR = 1000n;
+
+// Collateral dust floor in raw token units, scaled by the collateral token's decimals.
+// Collateral has no value anchor (price is arbitrary), so the floor must stay negligible
+// in token terms for every decimals config:
+// - one micro-token (10^decimals / 1e6) so low-decimal tokens don't get real value
+//   misread as dust (900 raw units of a 2-decimal token is 9 whole tokens);
+// - at least 1 raw unit (smallest representable);
+// - capped at 1000 raw units so high-decimal tokens keep the historical 1000-wei floor —
+//   raising it would open a gap between the detection value floor (minRecoveryValueWad)
+//   and the swap-skip floor where a recovery could strand with rcv > 0.
+export function collateralDustFloor(decimals: number): bigint {
+  const microToken = 10n ** BigInt(decimals) / 1_000_000n;
+  const floored = microToken === 0n ? 1n : microToken;
+  return floored > 1000n ? 1000n : floored;
+}
 
 export function dedupKey(evt: Pick<RecoveryRequiredEvent, 'chainId' | 'arkAddress' | 'buckets'>): string {
   // Lowercase arkAddress: config stores verbatim casing and an operator re-casing a
@@ -331,14 +341,20 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
 
   // Dust thresholds — used by both the fresh-run contamination guard and the resume
   // path's dust normalization so a 1-wei transfer to the swapper can't DoS either path.
-  const lpDust = await vault.getLpDust();
-  const assetDecimals = Number(await vault.getAssetDecimals());
+  const [lpDust, assetDecimalsRaw, collateralDecimals] = await Promise.all([
+    vault.getLpDust(),
+    vault.getAssetDecimals(),
+    tokenDecimals(collateralToken),
+  ]);
+  const assetDecimals = Number(assetDecimalsRaw);
   const assetScale = 10n ** BigInt(assetDecimals);
   const wadScale = 10n ** 18n;
   // Quote-token dust floor: assetScale / QUOTE_DUST_DIVISOR, floored at 1 for pathological
   // <=3-decimal assets. See QUOTE_DUST_DIVISOR at module scope for rationale.
   const quoteDustRaw = assetScale / QUOTE_DUST_DIVISOR;
   const QUOTE_DUST_FLOOR = quoteDustRaw === 0n ? 1n : quoteDustRaw;
+  // Collateral floor scales with the collateral token's decimals — see collateralDustFloor.
+  const COLLATERAL_DUST_FLOOR = collateralDustFloor(collateralDecimals);
 
   // Contamination guard: the swapper wallet must hold nothing material to this vault
   // between cycles. If rcv==0 (no recovery in progress) but wallet has material balance,
@@ -883,6 +899,16 @@ async function balanceOf(token: Address, owner: Address): Promise<bigint> {
     functionName: 'balanceOf',
     args: [owner],
   })) as bigint;
+}
+
+async function tokenDecimals(token: Address): Promise<number> {
+  return Number(
+    await client.readContract({
+      address: token,
+      abi: erc20Abi,
+      functionName: 'decimals',
+    }),
+  );
 }
 
 async function approveExact(token: Address, spender: Address, amount: bigint): Promise<void> {

@@ -61,6 +61,7 @@ import {
   shouldEmitAlert,
   _resetDedupStoreForTests,
   _handleRecoveryTxForTests,
+  collateralDustFloor,
   type RecoveryRequiredEvent,
 } from '../../src/keepers/recoveryKeeper';
 import { wait } from '../../src/utils/transaction';
@@ -253,5 +254,26 @@ describe('handleRecoveryTx', () => {
     });
 
     expect(result).toBeNull();
+  });
+});
+
+describe('collateralDustFloor', () => {
+  it('caps high-decimal tokens at the historical 1000 raw-unit floor', () => {
+    expect(collateralDustFloor(18)).toBe(1000n);
+    expect(collateralDustFloor(12)).toBe(1000n);
+    expect(collateralDustFloor(9)).toBe(1000n);
+  });
+
+  it('uses a micro-token for mid-decimal tokens', () => {
+    expect(collateralDustFloor(7)).toBe(10n);
+    expect(collateralDustFloor(6)).toBe(1n);
+  });
+
+  it('floors low-decimal tokens at one raw unit so real value is never dust', () => {
+    // Finding scenario: 900 raw units of a 2-decimal token is 9 whole tokens.
+    // The floor must sit at 1 raw unit so that balance counts as material.
+    expect(collateralDustFloor(2)).toBe(1n);
+    expect(collateralDustFloor(0)).toBe(1n);
+    expect(900n >= collateralDustFloor(2)).toBe(true);
   });
 });

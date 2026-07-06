@@ -914,7 +914,10 @@ async function handleRecoveryTx(
 ): Promise<Awaited<ReturnType<typeof wait>> | null> {
   try {
     const hash = await txP;
-    return await wait(hash);
+    // Context must reach wait(): its LUPBelowHTP branch reads context.ark to call
+    // haltKeeper, which is what makes the isHalted guard at the top of runExecute
+    // actually stop the next tick from resubmitting a doomed tx.
+    return await wait(hash, context);
   } catch (err) {
     log.error(
       { event: 'recovery_tx_failed', ...context, err: abridgedViemError(err) },
@@ -923,6 +926,10 @@ async function handleRecoveryTx(
     return null;
   }
 }
+
+// Exposed for tests only: handleRecoveryTx is module-private plumbing, but the
+// context pass-through above is load-bearing (halt wiring) and needs a regression test.
+export const _handleRecoveryTxForTests = handleRecoveryTx;
 
 // ============= Config helpers for scheduler =============
 

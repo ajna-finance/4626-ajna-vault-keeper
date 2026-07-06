@@ -47,13 +47,23 @@ vi.mock('../../src/utils/client', () => ({
   readOnlyClient: {},
 }));
 
+vi.mock('../../src/utils/transaction', () => ({
+  wait: vi.fn(async () => ({ status: 'success' })),
+  getGasWithBuffer: vi.fn(),
+  parseRecoverCollateralLogs: vi.fn(() => []),
+  parseReturnQuoteTokenLog: vi.fn(() => null),
+  abridgedViemError: (err: unknown) => err,
+}));
+
 import {
   deriveRecoveryStage,
   dedupKey,
   shouldEmitAlert,
   _resetDedupStoreForTests,
+  _handleRecoveryTxForTests,
   type RecoveryRequiredEvent,
 } from '../../src/keepers/recoveryKeeper';
+import { wait } from '../../src/utils/transaction';
 
 describe('deriveRecoveryStage', () => {
   it('returns IDLE when not paused and rcv=0', () => {
@@ -222,5 +232,26 @@ describe('shouldEmitAlert', () => {
     shouldEmitAlert(baseEvt, 1_000_000, 1_000_000);
     _resetDedupStoreForTests();
     expect(shouldEmitAlert(baseEvt, 1_000_000, 1_000_001)).toBe(true);
+  });
+});
+
+describe('handleRecoveryTx', () => {
+  it('forwards the tx context to wait() so the LUPBelowHTP halt wiring can engage', async () => {
+    const context = {
+      action: 'recoverCollateral',
+      ark: '0x00000000000000000000000000000000000000a1',
+    };
+    await _handleRecoveryTxForTests(Promise.resolve('0xabc' as `0x${string}`), context);
+
+    expect(vi.mocked(wait)).toHaveBeenCalledWith('0xabc', context);
+  });
+
+  it('returns null instead of throwing when the tx rejects', async () => {
+    const result = await _handleRecoveryTxForTests(Promise.reject(new Error('boom')), {
+      action: 'returnQuoteToken',
+      ark: '0x00000000000000000000000000000000000000a1',
+    });
+
+    expect(result).toBeNull();
   });
 });

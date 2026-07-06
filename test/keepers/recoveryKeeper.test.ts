@@ -62,6 +62,7 @@ import {
   _resetDedupStoreForTests,
   _handleRecoveryTxForTests,
   collateralDustFloor,
+  refillPrecheck,
   type RecoveryRequiredEvent,
 } from '../../src/keepers/recoveryKeeper';
 import { wait } from '../../src/utils/transaction';
@@ -275,5 +276,86 @@ describe('collateralDustFloor', () => {
     expect(collateralDustFloor(2)).toBe(1n);
     expect(collateralDustFloor(0)).toBe(1n);
     expect(900n >= collateralDustFloor(2)).toBe(true);
+  });
+});
+
+describe('refillPrecheck', () => {
+  const base = {
+    amountWad: 10n ** 18n,
+    vaultRefillLps: 0n,
+    bucketLps: 0n,
+    bucketCollateral: 0n,
+    bankruptcyTime: 0n,
+    nowSec: 1_000_000n,
+    minTimeSinceBankruptcy: 259200n,
+    lpDust: 1_000_001n,
+    minLpMintedBps: 9900,
+  };
+
+  it('passes a healthy empty-bucket refill', () => {
+    expect(refillPrecheck(base)).toEqual({ ok: true });
+  });
+
+  it('rejects a recently bankrupt bucket', () => {
+    const r = refillPrecheck({ ...base, bankruptcyTime: base.nowSec - 100n });
+    expect(r).toMatchObject({ ok: false, reason: 'recently_bankrupt' });
+  });
+
+  it('passes once the bankruptcy cooldown has elapsed', () => {
+    const r = refillPrecheck({ ...base, bankruptcyTime: base.nowSec - 259200n });
+    expect(r).toEqual({ ok: true });
+  });
+
+  it('rejects pool-total LP in the BucketLPDangerous range', () => {
+    const r = refillPrecheck({ ...base, bucketLps: 1_000_000n });
+    expect(r).toMatchObject({ ok: false, reason: 'bucket_lp_dangerous' });
+  });
+
+  it('rejects a zero deposit as no_quote_to_refill, not below_dust', () => {
+    const r = refillPrecheck({ ...base, amountWad: 0n });
+    expect(r).toMatchObject({ ok: false, reason: 'no_quote_to_refill' });
+  });
+
+  it('checks dust against the VAULT LP after mint, not pool-total LP', () => {
+    // The confirmed divergence: other lenders hold plenty of LP (pool-total clears
+    // the dangerous range), the vault holds none, and the deposit mints under
+    // LP_DUST. The old pool-total check waved this through to an on-chain
+    // DustyBucket revert.
+    const r = refillPrecheck({
+      ...base,
+      bucketLps: 2_000_000n,
+      vaultRefillLps: 0n,
+      amountWad: 500_000n,
+    });
+    expect(r).toMatchObject({ ok: false, reason: 'below_dust' });
+  });
+
+  it('passes when existing vault LP already clears LP_DUST', () => {
+    const r = refillPrecheck({
+      ...base,
+      bucketLps: 2_000_000n,
+      vaultRefillLps: 2_000_000n,
+      amountWad: 1n,
+    });
+    expect(r).toEqual({ ok: true });
+  });
+
+  it('discounts the minted estimate by minLpMintedBps for pure-quote buckets', () => {
+    // amount exactly lpDust: minted estimate = lpDust * 0.99 < lpDust → reject.
+    const r = refillPrecheck({ ...base, amountWad: base.lpDust });
+    expect(r).toMatchObject({ ok: false, reason: 'below_dust' });
+    // Grossing the amount up past the discount passes.
+    const ok = refillPrecheck({ ...base, amountWad: (base.lpDust * 10001n) / 9900n });
+    expect(ok).toEqual({ ok: true });
+  });
+
+  it('uses the undiscounted amount for mixed buckets', () => {
+    const r = refillPrecheck({
+      ...base,
+      bucketCollateral: 5n,
+      bucketLps: 2_000_000n,
+      amountWad: base.lpDust,
+    });
+    expect(r).toEqual({ ok: true });
   });
 });

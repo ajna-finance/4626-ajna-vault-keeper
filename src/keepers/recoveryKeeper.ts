@@ -145,6 +145,76 @@ export function _resetArkLocksForTests(): void {
   arkLocks.clear();
 }
 
+// ============= Refill pre-check =============
+
+export type RefillPrecheckInput = {
+  // Deposit amount in WAD (returnQuoteToken's _amt basis).
+  amountWad: bigint;
+  // The vault's OWN LP in the refill bucket (pool.lenderInfo) — the DustyBucket basis.
+  vaultRefillLps: bigint;
+  // Pool-total LP in the refill bucket (bucketInfo) — the BucketLPDangerous basis.
+  bucketLps: bigint;
+  bucketCollateral: bigint;
+  bankruptcyTime: bigint;
+  nowSec: bigint;
+  minTimeSinceBankruptcy: bigint;
+  lpDust: bigint;
+  minLpMintedBps: number;
+};
+
+export type RefillPrecheckResult =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: 'recently_bankrupt' | 'bucket_lp_dangerous' | 'no_quote_to_refill' | 'below_dust';
+      detail: Record<string, unknown>;
+    };
+
+// Mirrors the contract's refill gates so a doomed returnQuoteToken is caught before
+// spending gas, with a precise reason instead of a generic revert.
+export function refillPrecheck(i: RefillPrecheckInput): RefillPrecheckResult {
+  if (i.bankruptcyTime > 0n && i.nowSec - i.bankruptcyTime < i.minTimeSinceBankruptcy) {
+    return { ok: false, reason: 'recently_bankrupt', detail: { bankruptcyTime: i.bankruptcyTime } };
+  }
+
+  // _validDestination in AjnaVaultLibrary reverts with BucketLPDangerous when
+  // 0 < POOL-TOTAL bucketLP <= 1_000_000.
+  if (i.bucketLps > 0n && i.bucketLps <= 1_000_000n) {
+    return { ok: false, reason: 'bucket_lp_dangerous', detail: { refillLps: i.bucketLps } };
+  }
+
+  // Zero-quote guard: if Stage 2 was skipped or the wallet was externally swept,
+  // returnQuoteToken(bucket, 0) would revert or no-op, leaving rcv>0 and the vault
+  // paused forever. Bail to operator.
+  if (i.amountWad === 0n) {
+    return { ok: false, reason: 'no_quote_to_refill', detail: {} };
+  }
+
+  // DustyBucket basis: the contract checks the VAULT'S OWN LP after minting
+  // (AjnaVaultLibrary._fill: lps[bucket] += minted; revert if < LP_DUST) — NOT the
+  // pool-total bucket LP and NOT the deposit amount. A bucket full of other lenders'
+  // LP still reverts if the vault's own minted LP lands under LP_DUST.
+  //
+  // Minted-LP estimate: for pure-quote buckets the poor_exchange_rate gate (applied
+  // after this pre-check) rejects any bucket whose round-trip falls below
+  // minLpMintedBps, so minted >= amount * minLpMintedBps / 10000 on every path that
+  // reaches the tx (the ~1% margin also absorbs Ajna's deposit fee). Mixed buckets
+  // have no reliable bound — LP prices in collateral too — so approximate minted with
+  // the full amount; a mixed bucket with an extreme rate can still revert on-chain,
+  // reported as reason 'revert'.
+  const estimatedMintedLp =
+    i.bucketCollateral === 0n ? (i.amountWad * BigInt(i.minLpMintedBps)) / 10000n : i.amountWad;
+  if (i.vaultRefillLps + estimatedMintedLp < i.lpDust) {
+    return {
+      ok: false,
+      reason: 'below_dust',
+      detail: { vaultRefillLps: i.vaultRefillLps, estimatedMintedLp, lpDust: i.lpDust },
+    };
+  }
+
+  return { ok: true };
+}
+
 // ============= Concurrency lock =============
 
 const arkLocks = new Map<Address, Promise<unknown>>();
@@ -684,74 +754,35 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
   // an ERC20 call, which is asset-dec). LP_DUST is also WAD.
   const walletQuoteBalFinal = await balanceOf(quoteToken, wallet);
   const walletQuoteBalFinalWad = (walletQuoteBalFinal * wadScale) / assetScale;
-  const { lps: refillLps, collateral: refillCollateral, bankruptcyTime: refillBankruptcyTime } =
-    await vault.getBucketDetails(refillBucket);
+  const [{ lps: refillLps, collateral: refillCollateral, bankruptcyTime: refillBankruptcyTime }, vaultRefillLps] =
+    await Promise.all([
+      vault.getBucketDetails(refillBucket),
+      vault.getVaultLps(refillBucket),
+    ]);
 
-  if (
-    refillBankruptcyTime > 0n &&
-    BigInt(Math.floor(Date.now() / 1000)) - refillBankruptcyTime <
-      target.settings.minTimeSinceBankruptcy
-  ) {
+  const precheck = refillPrecheck({
+    amountWad: walletQuoteBalFinalWad,
+    vaultRefillLps,
+    bucketLps: refillLps,
+    bucketCollateral: refillCollateral,
+    bankruptcyTime: refillBankruptcyTime,
+    nowSec: BigInt(Math.floor(Date.now() / 1000)),
+    minTimeSinceBankruptcy: target.settings.minTimeSinceBankruptcy,
+    lpDust,
+    minLpMintedBps: target.settings.minLpMintedBps,
+  });
+  if (!precheck.ok) {
     log.error(
       {
         event: 'recovery_refill_failed',
-        reason: 'recently_bankrupt',
-        ark,
-        refillBucket,
-        bankruptcyTime: refillBankruptcyTime,
-      },
-      'refill bucket recently bankrupt',
-    );
-    return false;
-  }
-
-  // _validDestination in AjnaVaultLibrary reverts with BucketLPDangerous when
-  // 0 < bucketLP <= 1_000_000. Catch it pre-flight instead of wasting gas on a
-  // tx that was doomed from submission.
-  if (refillLps > 0n && refillLps <= 1_000_000n) {
-    log.error(
-      {
-        event: 'recovery_refill_failed',
-        reason: 'bucket_lp_dangerous',
-        ark,
-        refillBucket,
-        refillLps,
-      },
-      'refill bucket LP in dangerous range (1 to 1_000_000); would revert BucketLPDangerous',
-    );
-    return false;
-  }
-
-  // Dust floor: when the bucket is empty, the deposit must clear LP_DUST (WAD).
-  if (refillLps === 0n && walletQuoteBalFinalWad < lpDust) {
-    log.error(
-      {
-        event: 'recovery_refill_failed',
-        reason: 'below_dust',
+        reason: precheck.reason,
         ark,
         refillBucket,
         walletQuoteBal: walletQuoteBalFinal,
         walletQuoteBalFinalWad,
-        lpDust,
+        ...precheck.detail,
       },
-      'refill amount below LP_DUST on empty bucket',
-    );
-    return false;
-  }
-
-  // Zero-quote guard: if Stage 2 was skipped (sub-dust collateral recovered) or the
-  // wallet was externally swept, we'd submit returnQuoteToken(bucket, 0) which either
-  // reverts or no-ops, leaving rcv>0 and the vault paused forever. Bail to operator.
-  if (walletQuoteBalFinalWad === 0n) {
-    log.error(
-      {
-        event: 'recovery_refill_failed',
-        reason: 'no_quote_to_refill',
-        ark,
-        refillBucket,
-        walletQuoteBal: walletQuoteBalFinal,
-      },
-      'wallet has no quote tokens to refill; rcv>0 but nothing to return, operator attention required',
+      `refill pre-check failed: ${precheck.reason}`,
     );
     return false;
   }

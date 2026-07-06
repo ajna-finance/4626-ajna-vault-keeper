@@ -357,23 +357,29 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
   const quoteToken = config.quoteTokenAddress;
   const wallet = client.account.address;
 
-  // Probe the swap executor BEFORE any mutating tx. recoverCollateral is irreversible
-  // (rcv>0 pauses the vault until the full swap+refill pipeline completes), so a
-  // deployment without a real Bot 1 adapter must fail here — not after the vault is
-  // already paused with collateral stranded in the wallet. getSpender is a local,
-  // synchronous call; UnconfiguredSwapExecutor (the default) throws on it.
-  try {
-    swapExecutor.getSpender(collateralToken);
-  } catch (err) {
-    log.error(
-      {
-        event: 'recovery_blocked_swap_executor',
-        ark,
-        err: abridgedViemError(err),
-      },
-      'swap executor unavailable; blocking recovery before any on-chain action',
-    );
-    return false;
+  // Probe the swap executor BEFORE starting a FRESH recovery. recoverCollateral is
+  // irreversible (rcv>0 pauses the vault until the full swap+refill pipeline
+  // completes), so a deployment without a real Bot 1 adapter must fail here — not
+  // after the vault is already paused with collateral stranded in the wallet.
+  // Deliberately scoped to rcv == 0: a resume whose swap already happened (stage
+  // SWAPPED — e.g. the operator swapped manually) never needs the executor and must
+  // be able to finish the refill without one. Resumes that still hold collateral are
+  // re-probed at the swap stage. getSpender is a local, synchronous call;
+  // UnconfiguredSwapExecutor (the default) throws on it.
+  if (rcv === 0n) {
+    try {
+      swapExecutor.getSpender(collateralToken);
+    } catch (err) {
+      log.error(
+        {
+          event: 'recovery_blocked_swap_executor',
+          ark,
+          err: abridgedViemError(err),
+        },
+        'swap executor unavailable; blocking recovery before any on-chain action',
+      );
+      return false;
+    }
   }
 
   // Fail fast if the loaded wallet isn't the on-chain swapper for this vault.
@@ -630,6 +636,23 @@ async function runExecute(target: ArkTarget, swapExecutor: SwapExecutor): Promis
   // don't justify a swap round-trip; they'd quote/execute for near-nothing and fail.
   const walletCollateralBal = await balanceOf(collateralToken, wallet);
   if (walletCollateralBal >= COLLATERAL_DUST_FLOOR) {
+    // Resume-path probe: a fresh run was already probed in preflight, but a resume
+    // (rcv > 0) skips that so a swap-free SWAPPED resume can refill without an
+    // adapter. This path DOES need the executor — validate before approving anything.
+    try {
+      swapExecutor.getSpender(collateralToken);
+    } catch (err) {
+      log.error(
+        {
+          event: 'recovery_blocked_swap_executor',
+          ark,
+          err: abridgedViemError(err),
+        },
+        'swap executor unavailable; collateral held in wallet needs a swap to proceed',
+      );
+      return false;
+    }
+
     const chainId = config.chainId;
     const buildQuoteReq = (): SwapQuoteRequest => ({
       chainId,

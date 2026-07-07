@@ -476,16 +476,18 @@ can never fill later, so a timeout is a terminal, re-quotable failure that resum
 cleanly from the RECOVERED stage. A Bot 1 HTTP adapter slots in beside it as a
 second registry entry whenever Bot 1's API contract is available.
 
-Credential-mode constraint: CoW orders are EIP-712 typed-data signatures, and the
-keeper's remote-signer account deliberately does not implement typed-data signing —
-so the CoW adapter requires `PRIVATE_KEY` or `KEYSTORE_PATH` for the swapper wallet
-and refuses to construct under `REMOTE_SIGNER_URL` (startup fail-fast, before any
-on-chain action). Supporting remote signers here means adding verified
-`eth_signTypedData_v4` support to `src/utils/remoteSigner.ts` first. Note the
-on-chain `VaultAuth.swapper` is a bare address — governance COULD point it at a
-contract wallet, in which case this keeper simply refuses to act
+Credential modes: all three (`PRIVATE_KEY`, `KEYSTORE_PATH`, `REMOTE_SIGNER_URL`)
+work with the CoW adapter. CoW orders are EIP-712 typed-data signatures; the
+remote-signer account signs them via `eth_signTypedData_v4` with the same
+fail-closed verification as its message and transaction paths — the returned
+signature must recover, over OUR locally-computed hash of the payload, to the
+configured signer address, so a remote signer that signed a different struct than
+requested is rejected before the order leaves the process. Note the on-chain
+`VaultAuth.swapper` is a bare address — governance COULD point it at a contract
+wallet, in which case this keeper simply refuses to act
 (`recovery_wallet_role_mismatch`), since it only executes when the loaded signing
-account IS the swapper.
+account IS the swapper; contract-wallet swappers would additionally need EIP-1271
+or pre-signed CoW orders, which this adapter does not implement.
 
 ## Recovery State Machine
 

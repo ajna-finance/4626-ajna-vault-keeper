@@ -902,3 +902,138 @@ describe('remote signer mTLS dispatcher wiring', () => {
     expect(init).not.toHaveProperty('dispatcher');
   });
 });
+
+describe('remote signer typed-data signing', () => {
+  const SETTLEMENT = '0x9008D19f58AAbD9eD0D60971565AA8510560ab41' as const;
+  // CoW-shaped order: exercises bigint serialization and a realistic types set.
+  const typedData = {
+    domain: {
+      name: 'Gnosis Protocol',
+      version: 'v2',
+      chainId: 1,
+      verifyingContract: SETTLEMENT,
+    },
+    types: {
+      Order: [
+        { name: 'sellToken', type: 'address' },
+        { name: 'buyToken', type: 'address' },
+        { name: 'receiver', type: 'address' },
+        { name: 'sellAmount', type: 'uint256' },
+        { name: 'buyAmount', type: 'uint256' },
+        { name: 'validTo', type: 'uint32' },
+        { name: 'appData', type: 'bytes32' },
+        { name: 'feeAmount', type: 'uint256' },
+        { name: 'kind', type: 'string' },
+        { name: 'partiallyFillable', type: 'bool' },
+        { name: 'sellTokenBalance', type: 'string' },
+        { name: 'buyTokenBalance', type: 'string' },
+      ],
+    },
+    primaryType: 'Order',
+    message: {
+      sellToken: '0x00000000000000000000000000000000000000c1',
+      buyToken: '0x6b175474e89094c44da98b954eedeac495271d0f',
+      receiver: '0x00000000000000000000000000000000000000a1',
+      sellAmount: 10n ** 18n,
+      buyAmount: 9950n,
+      validTo: 1234567890,
+      appData: '0xb48d38f93eaa084033fc5970bf96e559c33c4cdc07d889ab00b4d63f9590739d',
+      feeAmount: 0n,
+      kind: 'sell',
+      partiallyFillable: false,
+      sellTokenBalance: 'erc20',
+      buyTokenBalance: 'erc20',
+    },
+  } as const;
+
+  it('signs through eth_signTypedData_v4 with the full EIP-712 JSON payload', async () => {
+    const signer = privateKeyToAccount(
+      '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
+    );
+    const signature = await signer.signTypedData(typedData);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonRpcMockResponse({ id: 1, jsonrpc: '2.0', result: signature }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { createRemoteSignerAccount } = await import('../../src/utils/remoteSigner.ts');
+    const account = createRemoteSignerAccount({
+      address: signer.address,
+      timeoutMs: 30000,
+      url: 'https://signer.example',
+    });
+
+    const result = await account.signTypedData(typedData);
+    expect(result).toBe(signature);
+
+    const request = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
+    expect(request.method).toBe('eth_signTypedData_v4');
+    expect(request.params[0]).toBe(signer.address);
+
+    const payload = JSON.parse(request.params[1]);
+    expect(payload.primaryType).toBe('Order');
+    // eth_signTypedData_v4 consumers require the domain type listed explicitly.
+    expect(payload.types.EIP712Domain).toEqual([
+      { name: 'name', type: 'string' },
+      { name: 'version', type: 'string' },
+      { name: 'chainId', type: 'uint256' },
+      { name: 'verifyingContract', type: 'address' },
+    ]);
+    expect(payload.types.Order).toHaveLength(12);
+    // bigints must serialize as decimal strings, not fail JSON.stringify.
+    expect(payload.message.sellAmount).toBe('1000000000000000000');
+    expect(payload.message.feeAmount).toBe('0');
+    expect(payload.domain.verifyingContract).toBe(SETTLEMENT);
+  });
+
+  it('rejects typed-data signatures that recover to a different address', async () => {
+    const configuredAddress = '0x00000000000000000000000000000000000000A1' as const;
+    const wrongSigner = privateKeyToAccount(
+      '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d',
+    );
+    const signature = await wrongSigner.signTypedData(typedData);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonRpcMockResponse({ id: 1, jsonrpc: '2.0', result: signature }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { createRemoteSignerAccount } = await import('../../src/utils/remoteSigner.ts');
+    const account = createRemoteSignerAccount({
+      address: configuredAddress,
+      timeoutMs: 30000,
+      url: 'https://signer.example',
+    });
+
+    await expect(account.signTypedData(typedData)).rejects.toThrow(
+      /typed data signature recovered/,
+    );
+  });
+
+  it('rejects a signature from the right key over a different struct than requested', async () => {
+    const signer = privateKeyToAccount(
+      '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
+    );
+    // Signed a tampered order (different buyAmount): recovery over OUR payload
+    // must not come back to the configured address.
+    const tampered = {
+      ...typedData,
+      message: { ...typedData.message, buyAmount: 1n },
+    } as const;
+    const signature = await signer.signTypedData(tampered);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonRpcMockResponse({ id: 1, jsonrpc: '2.0', result: signature }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { createRemoteSignerAccount } = await import('../../src/utils/remoteSigner.ts');
+    const account = createRemoteSignerAccount({
+      address: signer.address,
+      timeoutMs: 30000,
+      url: 'https://signer.example',
+    });
+
+    await expect(account.signTypedData(typedData)).rejects.toThrow(
+      /typed data signature recovered/,
+    );
+  });
+});

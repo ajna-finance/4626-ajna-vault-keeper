@@ -2,10 +2,12 @@ import type { Dispatcher } from 'undici';
 import {
   bytesToHex,
   getTransactionType,
+  getTypesForEIP712Domain,
   isAddressEqual,
   parseTransaction,
   recoverMessageAddress,
   recoverTransactionAddress,
+  recoverTypedDataAddress,
   serializeTransaction,
   stringToHex,
   toHex,
@@ -194,7 +196,7 @@ async function requestRemoteSigner<T>(
 function assertRecoveredAddressMatchesExpected(
   expectedAddress: Address,
   recoveredAddress: Address,
-  scope: 'message' | 'transaction',
+  scope: 'message' | 'transaction' | 'typed data',
 ) {
   if (!isAddressEqual(recoveredAddress, expectedAddress)) {
     throw new Error(
@@ -233,6 +235,46 @@ function extractSignatureFromSignedTransaction(signedTransactionHex: Hex): Signa
   throw new Error(
     `Remote signer eth_signTransaction response is missing signature fields (yParity, v)`,
   );
+}
+
+// eth_signTypedData_v4 expects the full EIP-712 payload as a JSON string: the
+// EIP712Domain type listed explicitly alongside the message types, and uint values
+// as decimal strings (typed-data messages carry bigints, which JSON.stringify
+// rejects without the replacer).
+function serializeTypedDataPayload(typedData: TypedDataDefinition): string {
+  const { domain, message, primaryType, types } = typedData;
+  const payload = {
+    domain: domain ?? {},
+    message,
+    primaryType,
+    types: {
+      EIP712Domain: getTypesForEIP712Domain({ domain }),
+      ...types,
+    },
+  };
+  return JSON.stringify(payload, (_key, value: unknown) =>
+    typeof value === 'bigint' ? value.toString() : value,
+  );
+}
+
+async function requestVerifiedTypedDataSignature(
+  config: RemoteSignerConfig,
+  typedData: TypedDataDefinition,
+): Promise<Hex> {
+  const signature = await requestRemoteSigner<Hex>(config, 'eth_signTypedData_v4', [
+    config.address,
+    serializeTypedDataPayload(typedData),
+  ]);
+  // Same fail-closed rule as messages and transactions: the signature must recover
+  // to the configured address, computed over OUR hash of the payload — a remote
+  // signer that signed a different struct than we sent fails here.
+  const recoveredAddress = await recoverTypedDataAddress({
+    ...typedData,
+    signature,
+  } as unknown as Parameters<typeof recoverTypedDataAddress>[0]);
+
+  assertRecoveredAddressMatchesExpected(config.address, recoveredAddress, 'typed data');
+  return signature;
 }
 
 async function requestVerifiedMessageSignature(
@@ -281,8 +323,11 @@ export function createRemoteSignerAccount(config: RemoteSignerConfig) {
     async signTypedData<
       const typedData extends TypedData | Record<string, unknown>,
       primaryType extends keyof typedData | 'EIP712Domain' = keyof typedData,
-    >(_typedData: TypedDataDefinition<typedData, primaryType>) {
-      throw new Error('Remote signer typed-data signing is not supported by this keeper');
+    >(typedDataDefinition: TypedDataDefinition<typedData, primaryType>) {
+      return requestVerifiedTypedDataSignature(
+        config,
+        typedDataDefinition as unknown as TypedDataDefinition,
+      );
     },
   });
 }

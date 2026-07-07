@@ -1,23 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const { mockConfig, mockEnv, signTypedData } = vi.hoisted(() => ({
+const { mockConfig, signTypedData } = vi.hoisted(() => ({
   mockConfig: {
     chainId: 1,
     quoteTokenAddress: '0x6b175474e89094c44da98b954eedeac495271d0f',
     keeper: { logLevel: 'warn' },
     recovery: {} as { swapExecutor?: { adapter: string; apiBaseUrl?: string; expectedSpender?: string } },
   },
-  mockEnv: { credentialMode: 'privateKey' as string },
   signTypedData: vi.fn(async (_args: unknown) => '0xdeadbeefsignature'),
 }));
 
 vi.mock('../../src/utils/config', () => ({ config: mockConfig }));
-vi.mock('../../src/utils/env', () => ({
-  env: { BOT_MODE: 'recovery-auto' },
-  get credentialMode() {
-    return mockEnv.credentialMode;
-  },
-}));
 vi.mock('../../src/utils/client', () => ({
   client: {
     account: { address: '0x00000000000000000000000000000000000000a1' },
@@ -77,7 +70,6 @@ function stubFetch(routes: Route[]) {
 beforeEach(() => {
   mockConfig.chainId = 1;
   mockConfig.recovery = {};
-  mockEnv.credentialMode = 'privateKey';
   signTypedData.mockClear();
 });
 
@@ -97,16 +89,6 @@ describe('CowSwapExecutor', () => {
     expect(() => new CowSwapExecutor({ apiBaseUrl: 'https://example.test' })).not.toThrow();
   });
 
-  it('refuses the remote-signer credential mode at construction', async () => {
-    // The remote-signer account throws on signTypedData; the adapter must fail at
-    // startup, not after recoverCollateral has already paused the vault.
-    mockEnv.credentialMode = 'remoteSigner';
-    vi.resetModules();
-    const { CowSwapExecutor: FreshCow } = await import('../../src/ark/swapAdapters/cow');
-    expect(() => new FreshCow()).toThrow(
-      'remote signer does not support',
-    );
-  });
 
   it('quotes a sell and applies our slippage to minAmountOut', async () => {
     const { calls } = stubFetch([

@@ -1,6 +1,7 @@
 import { keccak256, stringToBytes, type Address } from 'viem';
 import { client } from '../../utils/client';
 import { config } from '../../utils/config';
+import { credentialMode } from '../../utils/env';
 import { log } from '../../utils/logger';
 import type {
   SwapExecutionRequest,
@@ -89,6 +90,16 @@ export class CowSwapExecutor implements SwapExecutor {
   private readonly pollIntervalMs: number;
 
   constructor(opts: CowSwapExecutorOptions = {}) {
+    // CoW orders are EIP-712 typed-data signatures, and the remote-signer account
+    // deliberately throws on signTypedData (src/utils/remoteSigner.ts). Without this
+    // guard the failure would surface mid-recovery — AFTER recoverCollateral has
+    // paused the vault and the relayer approval is granted — instead of at startup.
+    if (credentialMode === 'remoteSigner') {
+      throw new Error(
+        'CowSwapExecutor: CoW orders need local EIP-712 typed-data signing, which the ' +
+          'remote signer does not support; use PRIVATE_KEY or KEYSTORE_PATH for the swapper wallet',
+      );
+    }
     const base = opts.apiBaseUrl ?? API_BASE_BY_CHAIN[config.chainId];
     if (!base) {
       throw new Error(

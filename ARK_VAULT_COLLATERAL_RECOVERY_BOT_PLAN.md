@@ -476,6 +476,17 @@ can never fill later, so a timeout is a terminal, re-quotable failure that resum
 cleanly from the RECOVERED stage. A Bot 1 HTTP adapter slots in beside it as a
 second registry entry whenever Bot 1's API contract is available.
 
+Credential-mode constraint: CoW orders are EIP-712 typed-data signatures, and the
+keeper's remote-signer account deliberately does not implement typed-data signing —
+so the CoW adapter requires `PRIVATE_KEY` or `KEYSTORE_PATH` for the swapper wallet
+and refuses to construct under `REMOTE_SIGNER_URL` (startup fail-fast, before any
+on-chain action). Supporting remote signers here means adding verified
+`eth_signTypedData_v4` support to `src/utils/remoteSigner.ts` first. Note the
+on-chain `VaultAuth.swapper` is a bare address — governance COULD point it at a
+contract wallet, in which case this keeper simply refuses to act
+(`recovery_wallet_role_mismatch`), since it only executes when the loaded signing
+account IS the swapper.
+
 ## Recovery State Machine
 
 The recovery bot derives its stage from on-chain truth + recovery-wallet balances. No local checkpoint file is used.

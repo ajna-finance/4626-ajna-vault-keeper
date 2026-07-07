@@ -359,3 +359,26 @@ describe('refillPrecheck', () => {
     expect(r).toEqual({ ok: true });
   });
 });
+
+describe('getRecoveryTargets', () => {
+  it('maps configured arks to targets with resolved recovery settings', async () => {
+    const { config } = await import('../../src/utils/config');
+    const { getRecoveryTargets } = await import('../../src/keepers/recoveryKeeper');
+    const ark = {
+      vaultAddress: '0x00000000000000000000000000000000000000a1',
+      vaultAuthAddress: '0x00000000000000000000000000000000000000b1',
+    };
+    (config.arks as unknown[]).push(ark);
+    try {
+      const targets = getRecoveryTargets();
+      expect(targets).toHaveLength(1);
+      expect(targets[0]).toMatchObject({
+        vaultAddress: ark.vaultAddress,
+        vaultAuthAddress: ark.vaultAuthAddress,
+        settings: expect.objectContaining({ enabled: true }),
+      });
+    } finally {
+      (config.arks as unknown[]).length = 0;
+    }
+  });
+});

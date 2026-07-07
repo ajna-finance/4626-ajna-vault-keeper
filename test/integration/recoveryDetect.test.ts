@@ -9,6 +9,7 @@ import {
   setAuthPaused,
   setLenderLps,
   setLpToCollateral,
+  setVaultAuthRef,
 } from '../helpers/vaultHelpers';
 import {
   addOneBucket,
@@ -34,6 +35,7 @@ describe('recoveryKeeper detect mode', () => {
 
   let logSpy: ReturnType<typeof vi.spyOn>;
   let warnSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
 
   const target = () => ({
     vaultAddress: vaultAddr(),
@@ -46,6 +48,7 @@ describe('recoveryKeeper detect mode', () => {
     _resetArkLocksForTests();
     logSpy = vi.spyOn(log, 'info');
     warnSpy = vi.spyOn(log, 'warn');
+    errorSpy = vi.spyOn(log, 'error');
   });
 
   it('emits collateral_recovery_required when collateral is detected', async () => {
@@ -134,5 +137,20 @@ describe('recoveryKeeper detect mode', () => {
       (c) => (c[0] as { event?: string })?.event === 'collateral_recovery_required',
     );
     expect(emitted).toBeDefined();
+  });
+
+  it('flags auth pointer drift instead of trusting a stale pause read', async () => {
+    await setVaultAuthRef('0x00000000000000000000000000000000000000ee');
+
+    await detectOnly(target());
+
+    const drift = errorSpy.mock.calls.find(
+      (c) => (c[0] as { event?: string })?.event === 'recovery_auth_drift',
+    );
+    expect(drift).toBeDefined();
+    const collateralAlert = logSpy.mock.calls.find(
+      (c) => (c[0] as { event?: string })?.event === 'collateral_recovery_required',
+    );
+    expect(collateralAlert).toBeUndefined();
   });
 });

@@ -282,3 +282,33 @@ describe('createSwapExecutor registry', () => {
     );
   });
 });
+
+describe('CowSwapExecutor trade lookup', () => {
+  it('throws when a fulfilled order has no settlement trade', async () => {
+    stubFetch([
+      {
+        match: (url, method) => url.endsWith('/api/v1/quote') && method === 'POST',
+        respond: () => ({
+          body: { quote: { sellAmount: '1000', buyAmount: '10000', validTo: 1234567890 } },
+        }),
+      },
+      {
+        match: (url, method) => url.endsWith('/api/v1/orders') && method === 'POST',
+        respond: () => ({ body: 'order-uid-4' }),
+      },
+      {
+        match: (url, method) => url.includes('/api/v1/orders/order-uid-4') && method === 'GET',
+        respond: () => ({ body: { status: 'fulfilled', executedBuyAmount: '10000' } }),
+      },
+      {
+        match: (url, method) => url.includes('/api/v1/trades?orderUid=') && method === 'GET',
+        respond: () => ({ body: [] }),
+      },
+    ]);
+
+    const executor = new CowSwapExecutor({ pollIntervalMs: 1 });
+    await expect(executor.executeExactIn(baseRequest())).rejects.toThrow(
+      'no settlement trade found',
+    );
+  });
+});

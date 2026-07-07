@@ -7,12 +7,15 @@ vi.mock('graphql-request', async () => {
 
 import {
   setAuthPaused,
+  setBankruptcyTime,
   setCollateralToken,
   setLenderLps,
   setLpToCollateral,
+  setLps,
   setPoolCollateralAddress,
   setRemovedCollateralValue,
   setSwapper,
+  setVaultAuthRef,
 } from '../helpers/vaultHelpers';
 import {
   addOneBucket,
@@ -329,6 +332,256 @@ describe('recoveryKeeper execute mode: end-to-end', () => {
     const vault = createVault(vaultAddr(), authAddr());
     expect(await vault.getRemovedCollateralValue()).toBe(0n);
     expect(await vault.isAuthPaused()).toBe(true);
+  });
+});
+
+describe('recoveryKeeper execute mode: guard and failure paths', () => {
+  useForkSnapshot();
+  useSubgraphMock(request);
+
+  const SPENDER = '0x00000000000000000000000000000000000000fe' as Address;
+  const WAD = 10n ** 18n;
+
+  const okQuote = {
+    expectedAmountOut: WAD,
+    minAmountOut: WAD,
+    routeId: 'stub-route',
+    validUntil: 0n,
+  };
+
+  const target = (settingsOverrides: Record<string, unknown> = {}) => ({
+    vaultAddress: vaultAddr(),
+    vaultAuthAddress: authAddr(),
+    settings: { ...testRecoverySettings, ...settingsOverrides },
+  });
+
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  const findEvent = (spy: ReturnType<typeof vi.spyOn>, event: string) =>
+    spy.mock.calls.find((c) => (c[0] as { event?: string })?.event === event);
+
+  beforeEach(async () => {
+    _resetDedupStoreForTests();
+    _resetArkLocksForTests();
+    warnSpy = vi.spyOn(log, 'warn');
+    errorSpy = vi.spyOn(log, 'error');
+    await setPoolCollateralAddress(collateralTokenAddr());
+    await setCollateralToken(collateralTokenAddr());
+    await mintCollateral(vaultAddr(), 1_000_000n * WAD);
+    await setSwapper(client.account.address);
+  });
+
+  const inertExecutor: SwapExecutor = {
+    getSpender: () => SPENDER,
+    quoteExactIn: async () => okQuote,
+    executeExactIn: async () => {
+      throw new Error('not expected in this test');
+    },
+  };
+
+  it('aborts with recovery_auth_drift when vault.AUTH() diverges from config', async () => {
+    await setVaultAuthRef('0x00000000000000000000000000000000000000ee');
+
+    const ok = await execute(target(), inertExecutor);
+    expect(ok).toBe(false);
+    expect(findEvent(errorSpy, 'recovery_auth_drift')).toBeDefined();
+  });
+
+  it('blocks a fresh run when the wallet holds material pre-existing collateral', async () => {
+    await mintCollateral(client.account.address, WAD);
+
+    const ok = await execute(target(), inertExecutor);
+    expect(ok).toBe(false);
+    expect(findEvent(errorSpy, 'recovery_wallet_contaminated')).toBeDefined();
+  });
+
+  it('warns about sub-material wallet dust but proceeds as a clean no-op', async () => {
+    // 500 raw units of an 18-decimal token sits below collateralDustFloor (1000).
+    await mintCollateral(client.account.address, 500n);
+
+    const ok = await execute(target(), inertExecutor);
+    expect(ok).toBe(true);
+    expect(findEvent(warnSpy, 'recovery_wallet_dust')).toBeDefined();
+  });
+
+  it('bails to the operator on a PARTIAL_SWAP_AMBIGUOUS resume', async () => {
+    await setRemovedCollateralValue(WAD);
+    await mintCollateral(client.account.address, WAD);
+    await fundWithQuoteToken(client.account.address, WAD);
+
+    const ok = await execute(target(), inertExecutor);
+    expect(ok).toBe(false);
+    const mismatch = findEvent(errorSpy, 'recovery_state_mismatch');
+    expect(mismatch).toBeDefined();
+    expect(mismatch![0]).toMatchObject({ stage: 'PARTIAL_SWAP_AMBIGUOUS' });
+  });
+
+  it('bails to the operator on a NO_BALANCE resume', async () => {
+    await setRemovedCollateralValue(WAD);
+
+    const ok = await execute(target(), inertExecutor);
+    expect(ok).toBe(false);
+    const mismatch = findEvent(errorSpy, 'recovery_state_mismatch');
+    expect(mismatch).toBeDefined();
+    expect(mismatch![0]).toMatchObject({ stage: 'NO_BALANCE' });
+  });
+
+  it('rejects a refillBucketOverride below minBucketIndex before any tx', async () => {
+    await setRemovedCollateralValue(WAD);
+    await fundWithQuoteToken(client.account.address, WAD);
+
+    // MockVaultAuth.minBucketIndex defaults to 4155.
+    const ok = await execute(target({ refillBucketOverride: 4154n }), inertExecutor);
+    expect(ok).toBe(false);
+    expect(findEvent(errorSpy, 'recovery_refill_bucket_override_invalid')).toBeDefined();
+  });
+
+  it('blocks a collateral-holding resume at the swap stage without an executor', async () => {
+    await setRemovedCollateralValue(WAD);
+    await mintCollateral(client.account.address, WAD);
+
+    const ok = await execute(target());
+    expect(ok).toBe(false);
+    expect(findEvent(errorSpy, 'recovery_blocked_swap_executor')).toBeDefined();
+  });
+
+  it('halts with reason quote_failed when the adapter cannot quote', async () => {
+    await setRemovedCollateralValue(WAD);
+    await mintCollateral(client.account.address, WAD);
+
+    const ok = await execute(target(), {
+      getSpender: () => SPENDER,
+      quoteExactIn: async () => {
+        throw new Error('no liquidity');
+      },
+      executeExactIn: async () => {
+        throw new Error('unreachable');
+      },
+    });
+    expect(ok).toBe(false);
+    const failed = findEvent(errorSpy, 'recovery_swap_failed');
+    expect(failed).toBeDefined();
+    expect(failed![0]).toMatchObject({ reason: 'quote_failed' });
+  });
+
+  it('halts with reason invalid_spender when the adapter self-approves', async () => {
+    await setRemovedCollateralValue(WAD);
+    await mintCollateral(client.account.address, WAD);
+
+    const ok = await execute(target(), {
+      getSpender: () => client.account.address,
+      quoteExactIn: async () => okQuote,
+      executeExactIn: async () => {
+        throw new Error('unreachable');
+      },
+    });
+    expect(ok).toBe(false);
+    const failed = findEvent(errorSpy, 'recovery_swap_failed');
+    expect(failed).toBeDefined();
+    expect(failed![0]).toMatchObject({ reason: 'invalid_spender' });
+  });
+
+  it('halts with reason revert when swap execution throws', async () => {
+    await setRemovedCollateralValue(WAD);
+    await mintCollateral(client.account.address, WAD);
+
+    const ok = await execute(target(), {
+      getSpender: () => SPENDER,
+      quoteExactIn: async () => okQuote,
+      executeExactIn: async () => {
+        throw new Error('deadline expired');
+      },
+    });
+    expect(ok).toBe(false);
+    const failed = findEvent(errorSpy, 'recovery_swap_failed');
+    expect(failed).toBeDefined();
+    expect(failed![0]).toMatchObject({ reason: 'revert' });
+    // Collateral is still in the wallet, rcv > 0 — resumable.
+    const vault = createVault(vaultAddr(), authAddr());
+    expect(await vault.getRemovedCollateralValue()).toBe(WAD);
+  });
+
+  it('halts the refill on a recently bankrupt bucket (chain-time based)', async () => {
+    await setRemovedCollateralValue(WAD);
+    await fundWithQuoteToken(client.account.address, WAD);
+    const block = await client.getBlock();
+    await setBankruptcyTime(block.timestamp - 10n);
+
+    const ok = await execute(target(), inertExecutor);
+    expect(ok).toBe(false);
+    const failed = findEvent(errorSpy, 'recovery_refill_failed');
+    expect(failed).toBeDefined();
+    expect(failed![0]).toMatchObject({ reason: 'recently_bankrupt' });
+  });
+
+  it('halts the refill when pool-total LP is in the BucketLPDangerous range', async () => {
+    await setRemovedCollateralValue(WAD);
+    await fundWithQuoteToken(client.account.address, WAD);
+    await setLps(500_000n);
+
+    const ok = await execute(target(), inertExecutor);
+    expect(ok).toBe(false);
+    const failed = findEvent(errorSpy, 'recovery_refill_failed');
+    expect(failed).toBeDefined();
+    expect(failed![0]).toMatchObject({ reason: 'bucket_lp_dangerous' });
+  });
+
+  it('halts the refill on a poor exchange rate for a pure-quote bucket', async () => {
+    await setRemovedCollateralValue(WAD);
+    await fundWithQuoteToken(client.account.address, 2n * WAD);
+    // Refill bucket is minBucketIndex (4155). addOneBucket prices it with 1e18
+    // quote tokens, so a 2e18 refill round-trips at 5000 bps < minLpMintedBps 9900.
+    await addOneBucket(4155n);
+
+    const ok = await execute(target(), inertExecutor);
+    expect(ok).toBe(false);
+    const failed = findEvent(errorSpy, 'recovery_refill_failed');
+    expect(failed).toBeDefined();
+    expect(failed![0]).toMatchObject({ reason: 'poor_exchange_rate' });
+  });
+
+  it('resets a stale non-zero allowance before approving the exact swap amount', async () => {
+    const bucket = 4156n;
+    await addOneBucket(bucket);
+    await setLenderLps(bucket, vaultAddr(), 1000n);
+    await setLpToCollateral(bucket, WAD);
+    // Stale allowance from a hypothetical earlier run: approveExact must reset to
+    // zero and then approve the exact amount.
+    const stale = await client.writeContract({
+      address: collateralTokenAddr(),
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [SPENDER, 123n],
+      chain: null,
+      account: client.account,
+    });
+    await client.waitForTransactionReceipt({ hash: stale });
+
+    const ok = await execute(target(), {
+      getSpender: () => SPENDER,
+      quoteExactIn: async () => okQuote,
+      executeExactIn: async (req) => {
+        await fundWithQuoteToken(req.recipient, WAD);
+        return {
+          amountIn: req.amountIn,
+          amountOut: WAD,
+          minAmountOut: WAD,
+          txHash: `0x${'ef'.repeat(32)}` as `0x${string}`,
+          routeId: 'stub-route',
+          recipient: req.recipient,
+        };
+      },
+    });
+    expect(ok).toBe(true);
+
+    const allowance = await client.readContract({
+      address: collateralTokenAddr(),
+      abi: erc20Abi,
+      functionName: 'allowance',
+      args: [client.account.address, SPENDER],
+    });
+    expect(allowance).toBe(WAD);
   });
 });
 

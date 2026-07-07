@@ -202,3 +202,86 @@ describe('recovery-oneshot exit codes', () => {
     expect(execute).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('recovery execute loop isolation and recovery-auto mode', () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.doUnmock('../../src/utils/env.ts');
+    vi.doUnmock('../../src/keepers/recoveryKeeper.ts');
+    vi.doUnmock('../../src/ark/swapAdapters/index.ts');
+    vi.restoreAllMocks();
+  });
+
+  async function setupMode(botMode: string, execute: ReturnType<typeof vi.fn>, arkCount = 2) {
+    const log = { error: vi.fn(), info: vi.fn(), warn: vi.fn() };
+    const targets = Array.from({ length: arkCount }, (_, i) => ({
+      vaultAddress: `0x00000000000000000000000000000000000000c${i}` as Address,
+      vaultAuthAddress: `0x00000000000000000000000000000000000000d${i}` as Address,
+      settings: { enabled: true },
+    }));
+
+    vi.doMock('../../src/utils/env.ts', () => ({ env: { BOT_MODE: botMode } }));
+    vi.doMock('../../src/utils/config.ts', () => ({
+      config: {
+        keeper: { intervalMs: 1 },
+        oracle: {},
+        transaction: { confirmations: 0 },
+        recovery: {},
+        arks: [],
+      },
+      resolveArkSettings: vi.fn(),
+      resolveRecoverySettings: vi.fn(),
+    }));
+    vi.doMock('../../src/utils/logger.ts', () => ({ log }));
+    vi.doMock('../../src/keepers/metavaultKeeper.ts', () => ({ metavaultRun: vi.fn() }));
+    vi.doMock('../../src/keepers/arkKeeper.ts', () => ({ arkRun: vi.fn() }));
+    vi.doMock('../../src/keepers/recoveryKeeper.ts', () => ({
+      detectOnly: vi.fn(),
+      execute,
+      getRecoveryTargets: () => targets,
+    }));
+    vi.doMock('../../src/ark/swapAdapters/index.ts', () => ({
+      createSwapExecutor: vi.fn(() => undefined),
+    }));
+
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const { startScheduler } = await import('../../src/utils/scheduler.ts');
+    startScheduler();
+    return { exitSpy, log };
+  }
+
+  it('a throwing ark does not skip the remaining arks and fails the oneshot', async () => {
+    const execute = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('rpc exploded'))
+      .mockResolvedValueOnce(true);
+    const { exitSpy, log } = await setupMode('recovery-oneshot', execute);
+
+    await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(1));
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'recovery_run_failed' }),
+      expect.stringContaining('continuing to next ark'),
+    );
+  });
+
+  it('recovery-auto loops ticks until stopped', async () => {
+    const execute = vi.fn().mockResolvedValue(true);
+    const { log } = await setupMode('recovery-auto', execute, 1);
+
+    // At least two full ticks prove the continuous loop, not a single pass.
+    await vi.waitFor(() => expect(execute.mock.calls.length).toBeGreaterThanOrEqual(2));
+
+    process.emit('SIGINT');
+    await vi.waitFor(() =>
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ event: 'keeper_stopping' }),
+        expect.any(String),
+      ),
+    );
+    const callsAtStop = execute.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    // The abort may let one in-flight tick finish, but the loop must not keep going.
+    expect(execute.mock.calls.length).toBeLessThanOrEqual(callsAtStop + 1);
+  });
+});

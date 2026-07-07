@@ -54,8 +54,18 @@ async function runRecoveryExecute(): Promise<boolean> {
       );
       continue;
     }
-    const ok = await recoveryExecute(target, swapExecutor);
-    allOk &&= ok;
+    try {
+      const ok = await recoveryExecute(target, swapExecutor);
+      allOk &&= ok;
+    } catch (e) {
+      // Per-ark isolation, mirroring runKeeperInterval: one ark's thrown RPC error
+      // must not skip the remaining arks this tick.
+      log.error(
+        { event: 'recovery_run_failed', ark: target.vaultAddress, err: e },
+        `recovery run failed for ${target.vaultAddress}; continuing to next ark`,
+      );
+      allOk = false;
+    }
   }
   return allOk;
 }

@@ -900,6 +900,7 @@ Structured events are grouped into **alertable events** (things operators route 
 - `recovery_completed` — full flow complete; payload has `adminPausePending: boolean` (true if `AUTH.paused()` is still true post-`returnQuoteToken`)
 - `recovery_state_mismatch` — concurrency guard: state doesn't match expected pre-condition (includes PARTIAL_SWAP_AMBIGUOUS / NO_BALANCE resume states)
 - `recovery_oneshot_incomplete` — scheduler-level: a `recovery-oneshot` pass had at least one ark needing attention; process exits 1
+- `recovery_run_failed` — scheduler-level: an ark's execute run threw (e.g. RPC failure); the loop isolates it and continues to the remaining arks that tick
 
 ### Non-alert events
 

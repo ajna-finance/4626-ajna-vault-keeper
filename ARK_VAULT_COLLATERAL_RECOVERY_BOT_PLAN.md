@@ -47,6 +47,11 @@ what changed and why:
 10. **Wallet dust floors are decimals-aware** — the collateral-side floor scales with
     the collateral token's decimals (micro-token, min 1 raw unit, capped at 1000 raw
     units); the quote-side floor remains ~0.001 quote tokens. (§Recovery State Machine.)
+11. **Adapter delivery is a compile-time registry** — the concrete `SwapExecutor` is
+    selected by NAME via `recovery.swapExecutor.adapter` from a reviewed, compiled-in
+    set (no dynamic code loading in the process holding the swapper key), with an
+    optional operator-pinned spender allowlist. First registered adapter: CoW
+    Protocol. (§Bot-to-Bot Interface → Adapter delivery.)
 
 ## Purpose
 
@@ -436,6 +441,40 @@ Rule:
 - Bot 3 owns vault logic and constraints
 - Bot 1 owns swap execution and routing
 - Neither owns the other's state machine
+
+### Adapter delivery (amended 2026-07-06)
+
+The concrete `SwapExecutor` reaches the process through a compile-time registry
+(`src/ark/swapAdapters/`), selected by name:
+
+```jsonc
+"recovery": {
+  "swapExecutor": {
+    "adapter": "cow",                // must be a compiled-in registry name
+    "apiBaseUrl": "...",             // optional endpoint override
+    "expectedSpender": "0xC92E..."   // optional operator-pinned spender allowlist
+  }
+}
+```
+
+Config stays data, never code: there is no dynamic module loading, so nothing
+outside the reviewed registry can execute inside the process that holds the swapper
+key. Unknown names are rejected at config load; the scheduler builds the executor
+once at startup for the execute modes and fails closed if construction throws. With
+no `swapExecutor` block, the fail-closed `UnconfiguredSwapExecutor` remains in place
+and the preflight probe blocks fresh recoveries per run. When `expectedSpender` is
+set, the address the wallet approves collateral to must equal it exactly — an
+allowlist independent of the adapter implementation itself.
+
+First registered adapter: **CoW Protocol** (`adapter: "cow"`), chosen because its
+safety is enforced on-chain by the signed order (limit price, expiry, receiver)
+rather than by the hosted API, MEV protection is structural (batch auctions, no open
+mempool), and the approval target is the fixed, audited GPv2VaultRelayer. The
+orderbook API is a liveness dependency only. Settlement is asynchronous; the adapter
+polls until fill or `validTo` (= the keeper's swap deadline), and an expired order
+can never fill later, so a timeout is a terminal, re-quotable failure that resumes
+cleanly from the RECOVERED stage. A Bot 1 HTTP adapter slots in beside it as a
+second registry entry whenever Bot 1's API contract is available.
 
 ## Recovery State Machine
 

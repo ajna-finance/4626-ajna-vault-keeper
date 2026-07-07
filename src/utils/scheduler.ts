@@ -9,8 +9,14 @@ import {
   execute as recoveryExecute,
   getRecoveryTargets,
 } from '../keepers/recoveryKeeper.ts';
+import { createSwapExecutor } from '../ark/swapAdapters/index.ts';
+import type { SwapExecutor } from '../ark/swapExecutor.ts';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
+// Built once at startup for the execute modes; undefined lets recoveryExecute fall
+// back to its fail-closed UnconfiguredSwapExecutor default.
+let swapExecutor: SwapExecutor | undefined;
 
 export async function runKeeperInterval() {
   if (config.metavaultAddress) {
@@ -48,7 +54,7 @@ async function runRecoveryExecute(): Promise<boolean> {
       );
       continue;
     }
-    const ok = await recoveryExecute(target);
+    const ok = await recoveryExecute(target, swapExecutor);
     allOk &&= ok;
   }
   return allOk;
@@ -73,6 +79,26 @@ async function runOnce(): Promise<boolean | void> {
 export function startScheduler() {
   const interval = config.keeper.intervalMs;
   const isOneShot = env.BOT_MODE === 'recovery-oneshot';
+
+  if (env.BOT_MODE === 'recovery-auto' || env.BOT_MODE === 'recovery-oneshot') {
+    // Fail closed at startup: a misconfigured adapter must not tick-loop with the
+    // swapper key loaded. With no swapExecutor block configured this returns the
+    // UnconfiguredSwapExecutor, which the keeper's preflight probe handles per run.
+    try {
+      swapExecutor = createSwapExecutor();
+    } catch (e) {
+      log.error({ event: 'swap_executor_init_failed', err: e }, 'swap executor init failed');
+      process.exit(1);
+      return;
+    }
+    log.info(
+      {
+        event: 'swap_executor_configured',
+        adapter: config.recovery.swapExecutor?.adapter ?? 'unconfigured',
+      },
+      'swap executor ready',
+    );
+  }
 
   const ac = new AbortController();
   const { signal } = ac;

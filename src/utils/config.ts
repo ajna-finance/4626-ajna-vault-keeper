@@ -3,6 +3,7 @@ import { join, resolve } from 'path';
 import { isAddress, type Address } from 'viem';
 import { toAsset } from './decimalConversion.ts';
 import { AJNA_MAX_FENWICK_INDEX } from '../ajna/constants.ts';
+import { KNOWN_SWAP_ADAPTERS } from '../ark/swapAdapters/names.ts';
 
 // ============= Raw JSON Types =============
 
@@ -77,6 +78,11 @@ type RawConfig = {
     minLpMintedBps?: number;
     swapDeadlineSec?: number;
     minRecoveryValueWad?: string;
+    swapExecutor?: {
+      adapter: string;
+      apiBaseUrl?: string;
+      expectedSpender?: string;
+    };
   };
 
   arks: ArkConfig[];
@@ -223,7 +229,13 @@ export const config = {
   oracle: raw.oracle as ResolvedOracleConfig,
   arkGlobal: raw.arkGlobal as Required<RawConfig['arkGlobal']>,
   transaction: raw.transaction as Required<RawConfig['transaction']>,
-  recovery: raw.recovery as Required<NonNullable<RawConfig['recovery']>>,
+  // swapExecutor stays optional: unlike the numeric knobs it has no default —
+  // absence means "no adapter configured" and the registry returns the
+  // fail-closed UnconfiguredSwapExecutor.
+  recovery: raw.recovery as Required<
+    Omit<NonNullable<RawConfig['recovery']>, 'swapExecutor'>
+  > &
+    Pick<NonNullable<RawConfig['recovery']>, 'swapExecutor'>,
   remoteSigner: raw.remoteSigner as Required<NonNullable<RawConfig['remoteSigner']>>,
   quoteTokenAddress: quoteTokenAddress.toLowerCase() as Address,
   metavaultAddress: (metavaultAddress || undefined) as Address | undefined,
@@ -558,6 +570,22 @@ function validateRecovery(c: RawConfig): void {
   }
   if (c.recovery.minRecoveryValueWad !== undefined) {
     requireNonNegativeBigIntString(c.recovery.minRecoveryValueWad, 'recovery.minRecoveryValueWad');
+  }
+  if (c.recovery.swapExecutor !== undefined) {
+    requireObject(c.recovery.swapExecutor, 'recovery.swapExecutor');
+    const se = c.recovery.swapExecutor;
+    requireString(se.adapter, 'recovery.swapExecutor.adapter');
+    if (!(KNOWN_SWAP_ADAPTERS as readonly string[]).includes(se.adapter)) {
+      throwConfigError(
+        `recovery.swapExecutor.adapter must be one of ${KNOWN_SWAP_ADAPTERS.join(', ')} (got '${se.adapter}')`,
+      );
+    }
+    if (se.apiBaseUrl !== undefined) {
+      requireString(se.apiBaseUrl, 'recovery.swapExecutor.apiBaseUrl');
+    }
+    if (se.expectedSpender !== undefined) {
+      requireAddress(se.expectedSpender, 'recovery.swapExecutor.expectedSpender');
+    }
   }
 
   c.recovery.dedupWindowMs ??= DEFAULT_RECOVERY_DEDUP_WINDOW_MS;

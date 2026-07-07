@@ -138,6 +138,7 @@ describe('recovery-oneshot exit codes', () => {
     vi.resetModules();
     vi.doUnmock('../../src/utils/env.ts');
     vi.doUnmock('../../src/keepers/recoveryKeeper.ts');
+    vi.doUnmock('../../src/ark/swapAdapters/index.ts');
     vi.restoreAllMocks();
   });
 
@@ -157,6 +158,7 @@ describe('recovery-oneshot exit codes', () => {
         keeper: { intervalMs: 1 },
         oracle: {},
         transaction: { confirmations: 0 },
+        recovery: {},
         arks: [],
       },
       resolveArkSettings: vi.fn(),
@@ -169,6 +171,11 @@ describe('recovery-oneshot exit codes', () => {
       detectOnly: vi.fn(),
       execute,
       getRecoveryTargets: () => targets,
+    }));
+    // Mock at the registry seam so scheduler tests don't drag the adapters' real
+    // client/signing dependency chain into this module graph.
+    vi.doMock('../../src/ark/swapAdapters/index.ts', () => ({
+      createSwapExecutor: vi.fn(() => undefined),
     }));
 
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);

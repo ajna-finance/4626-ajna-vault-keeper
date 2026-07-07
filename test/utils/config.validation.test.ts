@@ -882,3 +882,41 @@ describe('config: invalid JSON and root type', () => {
     );
   });
 });
+
+describe('config: recovery.swapExecutor', () => {
+  it('accepts a known adapter with optional pinned spender', async () => {
+    mockConfigFs(
+      makeConfig({
+        recovery: { swapExecutor: { adapter: 'cow', expectedSpender: A4 } },
+      } as never),
+    );
+    const { config } = await import('../../src/utils/config.ts');
+    expect(config.recovery.swapExecutor).toMatchObject({ adapter: 'cow' });
+  });
+
+  it('rejects an unknown adapter name', async () => {
+    mockConfigFs(
+      makeConfig({ recovery: { swapExecutor: { adapter: 'uniswap-v9' } } } as never),
+    );
+    await expect(import('../../src/utils/config.ts')).rejects.toThrow(
+      "recovery.swapExecutor.adapter must be one of cow (got 'uniswap-v9')",
+    );
+  });
+
+  it('rejects a malformed expectedSpender address', async () => {
+    mockConfigFs(
+      makeConfig({
+        recovery: { swapExecutor: { adapter: 'cow', expectedSpender: 'not-an-address' } },
+      } as never),
+    );
+    await expect(import('../../src/utils/config.ts')).rejects.toThrow(
+      'recovery.swapExecutor.expectedSpender must be a valid 0x-prefixed 20-byte address',
+    );
+  });
+
+  it('leaves swapExecutor undefined when the block is absent', async () => {
+    mockConfigFs(makeConfig());
+    const { config } = await import('../../src/utils/config.ts');
+    expect(config.recovery.swapExecutor).toBeUndefined();
+  });
+});

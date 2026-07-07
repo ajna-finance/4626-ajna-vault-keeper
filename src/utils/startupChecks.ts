@@ -2,6 +2,7 @@ import { type Address } from 'viem';
 import { config } from './config.ts';
 import { contract } from './contract.ts';
 import { client, readOnlyClient } from './client.ts';
+import { env } from './env.ts';
 import { log } from './logger.ts';
 
 type MetavaultStrategyConfig = {
@@ -13,10 +14,14 @@ type MetavaultStrategyConfig = {
 
 export async function runStartupChecks(): Promise<void> {
   await verifyChainId();
-  if (config.metavaultAddress) {
+  // The metavault checks verify the SCHEDULER's keeper wallet (allocator
+  // authorization). Recovery modes sign with the swapper wallet — or, in
+  // recovery-detect, an ephemeral throwaway key — neither of which is an
+  // allocator, so running these checks there would fail every startup.
+  if (env.BOT_MODE === 'scheduler' && config.metavaultAddress) {
     await verifyMetavaultDeployment(config.metavaultAddress);
   }
-  log.info({ event: 'startup_checks_passed' }, 'startup checks passed');
+  log.info({ event: 'startup_checks_passed', mode: env.BOT_MODE }, 'startup checks passed');
 }
 
 async function verifyChainId(): Promise<void> {

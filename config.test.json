@@ -68,5 +68,9 @@
     "allocation": 40
   },
 
-  "minRateDiff": 10
+  "minRateDiff": 10,
+
+  "recovery": {
+    "minRecoveryValueWad": "0"
+  }
 }

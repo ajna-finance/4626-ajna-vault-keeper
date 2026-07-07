@@ -1,5 +1,24 @@
 import { readFileSync } from 'fs';
 
+export type BotMode = 'scheduler' | 'recovery-detect' | 'recovery-auto' | 'recovery-oneshot';
+
+const VALID_MODES: ReadonlyArray<BotMode> = [
+  'scheduler',
+  'recovery-detect',
+  'recovery-auto',
+  'recovery-oneshot',
+];
+
+function resolveBotMode(): BotMode {
+  const raw = process.env.BOT_MODE ?? 'scheduler';
+  if (!(VALID_MODES as readonly string[]).includes(raw)) {
+    throw new Error(`BOT_MODE "${raw}" is invalid; expected one of: ${VALID_MODES.join(', ')}`);
+  }
+  return raw as BotMode;
+}
+
+const BOT_MODE = resolveBotMode();
+
 const REQUIRED = ['RPC_URL', 'SUBGRAPH_URL'] as const;
 
 function readOptionalEnv(key: string): string | undefined {
@@ -92,7 +111,9 @@ const credentialModes = [
   REMOTE_SIGNER_URL ? 'remoteSigner' : null,
 ].filter((mode): mode is CredentialMode => mode !== null);
 
-if (credentialModes.length !== 1) {
+const modeNeedsWallet = BOT_MODE !== 'recovery-detect';
+
+if (credentialModes.length > 1 || (modeNeedsWallet && credentialModes.length !== 1)) {
   throw new Error(
     'Configure exactly one credential mode: PRIVATE_KEY, KEYSTORE_PATH, or REMOTE_SIGNER_URL with REMOTE_SIGNER_ADDRESS',
   );
@@ -102,9 +123,10 @@ if (process.env.ORACLE_API_KEY && !process.env.ORACLE_API_TIER) {
   throw new Error('API key tier must be specified');
 }
 
-export const credentialMode = credentialModes[0]!;
+export const credentialMode = credentialModes[0];
 
 export const env = {
+  BOT_MODE,
   RPC_URL: process.env.RPC_URL!,
   PRIVATE_KEY,
   KEYSTORE_PATH,

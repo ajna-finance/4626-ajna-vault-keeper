@@ -7,6 +7,7 @@ import { getGasWithBuffer, handleTransaction, type TransactionData } from '../ut
 import { getPrice } from '../oracle/price.ts';
 import { poolHasBadDebt, SubgraphUnavailableError } from '../subgraph/poolHealth.ts';
 import { createVault } from '../ark/vault.ts';
+import { detectRecoverable } from '../ark/recovery.ts';
 import { getChainTime, ChainTimeUnavailableError } from '../utils/chainTime.ts';
 import { AJNA_MAX_FENWICK_INDEX } from '../ajna/constants.ts';
 import { RunAbortError } from './runAbort.ts';
@@ -16,6 +17,10 @@ const haltedArks = new Set<Address>();
 let vault: ReturnType<typeof createVault>;
 let _settings: ResolvedArkSettings;
 let _moveStats: { attempted: number; succeeded: number } = { attempted: 0, succeeded: 0 };
+
+export function isHalted(address?: Address): boolean {
+  return address === undefined ? haltedArks.size > 0 : isArkHalted(address);
+}
 
 // ============= Types =============
 
@@ -56,6 +61,8 @@ export async function arkRun(
     if (isCurrentArkHalted()) return abortRun('keeper halted');
     if (await vault.isPaused()) return abortRun('vault is currently paused');
     if (await poolHasBadDebt(vault, _settings.maxAuctionAge)) return abortRun('pool has bad debt');
+    if (await detectRecoverable(vault, { minValueWad: _settings.minRecoveryValueWad }))
+      return abortRun('collateral detected, recovery required');
 
     const gas = await getGasWithBuffer('pool', 'updateInterest', [], await vault.getPoolAddress());
     const vaultAddress = vault.getAddress();

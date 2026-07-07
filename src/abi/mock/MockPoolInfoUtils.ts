@@ -93,6 +93,27 @@ export const mockPoolInfoUtilsAbi = [
     type: 'function',
   },
   {
+    inputs: [
+      { name: '_pool', type: 'address' },
+      { name: '_lps', type: 'uint256' },
+      { name: '_index', type: 'uint256' },
+    ],
+    name: 'lpToCollateral',
+    outputs: [{ name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [
+      { name: '_index', type: 'uint256' },
+      { name: '_amount', type: 'uint256' },
+    ],
+    name: 'setLpToCollateral',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
     inputs: [{ name: '_price', type: 'uint256' }],
     name: 'setLup',
     outputs: [],

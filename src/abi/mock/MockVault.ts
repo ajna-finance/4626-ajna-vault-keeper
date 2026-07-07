@@ -1,7 +1,7 @@
 export const mockVaultAbi = [
   {
     type: 'constructor',
-    inputs: [],
+    inputs: [{ name: '_pool', type: 'address' }],
     stateMutability: 'nonpayable',
   },
   {
@@ -75,6 +75,34 @@ export const mockVaultAbi = [
   },
   {
     type: 'function',
+    name: 'AUTH',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'removedCollateralValue',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'LP_DUST',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'collateralToken',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     name: 'buckets',
     inputs: [{ name: '', type: 'uint256' }],
     outputs: [{ name: '', type: 'uint256' }],
@@ -124,6 +152,16 @@ export const mockVaultAbi = [
   },
   {
     type: 'function',
+    name: 'lenderLps',
+    inputs: [
+      { name: '', type: 'uint256' },
+      { name: '', type: 'address' },
+    ],
+    outputs: [{ name: '', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     name: 'move',
     inputs: [
       { name: '_fromBucket', type: 'uint256' },
@@ -162,6 +200,65 @@ export const mockVaultAbi = [
   },
   {
     type: 'function',
+    name: 'setAuth',
+    inputs: [{ name: '_auth', type: 'address' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'setLpDust',
+    inputs: [{ name: '_d', type: 'uint256' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'setRemovedCollateralValue',
+    inputs: [{ name: '_v', type: 'uint256' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'setCollateralToken',
+    inputs: [{ name: '_token', type: 'address' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'setLenderLps',
+    inputs: [
+      { name: '_bucket', type: 'uint256' },
+      { name: '_lender', type: 'address' },
+      { name: '_lps', type: 'uint256' },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'recoverCollateral',
+    inputs: [
+      { name: '_fromIndexes', type: 'uint256[]' },
+      { name: '_amts', type: 'uint256[]' },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'returnQuoteToken',
+    inputs: [
+      { name: '_toIndex', type: 'uint256' },
+      { name: '_amt', type: 'uint256' },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
     name: 'drain',
     stateMutability: 'nonpayable',
     inputs: [{ name: '', type: 'uint256' }],
@@ -175,13 +272,6 @@ export const mockVaultAbi = [
       { name: '', type: 'uint256' },
     ],
     outputs: [{ name: '', type: 'uint256' }],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    name: 'setPaused',
-    inputs: [{ name: '_status', type: 'bool' }],
-    outputs: [],
     stateMutability: 'nonpayable',
   },
   {

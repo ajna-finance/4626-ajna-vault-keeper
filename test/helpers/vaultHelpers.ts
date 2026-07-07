@@ -40,7 +40,22 @@ export const setBufferRatio = (ratio: bigint) =>
 export const setMinBucketIndex = (index: bigint) =>
   waitForWrite(vaultAuth().write.setMinBucketIndex([index]));
 
-export const setPaused = (status: boolean) => waitForWrite(vault().write.setPaused(status));
+export const setAuthPaused = (status: boolean) =>
+  waitForWrite(vaultAuth().write.setAuthPaused([status]));
+export const setRemovedCollateralValue = (v: bigint) =>
+  waitForWrite(vault().write.setRemovedCollateralValue([v]));
+export const setLpDust = (d: bigint) => waitForWrite(vault().write.setLpDust([d]));
+export const setVaultAuthRef = (auth: Address) => waitForWrite(vault().write.setAuth([auth]));
+export const setCollateralToken = (addr: Address) =>
+  waitForWrite(vault().write.setCollateralToken([addr]));
+export const setSwapper = (addr: Address) => waitForWrite(vaultAuth().write.setSwapper([addr]));
+
+export const setLpToCollateral = async (index: bigint, amount: bigint) =>
+  waitForWrite((await getPoolInfoUtils()).write.setLpToCollateral([index, amount]));
+export const setLenderLps = async (index: bigint, lender: Address, lps: bigint) =>
+  waitForWrite((await getPool()).write.setLenderLps([index, lender, lps]));
+export const setPoolCollateralAddress = async (addr: Address) =>
+  waitForWrite((await getPool()).write.setCollateralAddress([addr]));
 
 const _setPrice = (price: bigint) => waitForWrite(chronicle().write.setPrice(price));
 

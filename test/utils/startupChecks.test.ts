@@ -83,6 +83,8 @@ async function loadStartupChecks(opts: {
   chainId?: number;
   metavault?: Partial<MetavaultStub>;
   bufferRatioByAuth?: Record<string, bigint>;
+  botMode?: string;
+  clientAccount?: { address: string } | undefined;
 }) {
   const cfg = { ...configWithMetavault(), ...opts.configOverrides };
 
@@ -96,8 +98,11 @@ async function loadStartupChecks(opts: {
   };
 
   vi.doMock('../../src/utils/config.ts', () => ({ config: cfg }));
+  vi.doMock('../../src/utils/env.ts', () => ({
+    env: { BOT_MODE: opts.botMode ?? 'scheduler' },
+  }));
   vi.doMock('../../src/utils/client.ts', () => ({
-    client: { account: { address: KEEPER_ADDRESS } },
+    client: { account: 'clientAccount' in opts ? opts.clientAccount : { address: KEEPER_ADDRESS } },
     readOnlyClient: { getChainId: async () => opts.chainId ?? 1 },
   }));
   vi.doMock('../../src/utils/contract.ts', () => ({
@@ -116,6 +121,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.resetModules();
   vi.doUnmock('../../src/utils/config.ts');
+  vi.doUnmock('../../src/utils/env.ts');
   vi.doUnmock('../../src/utils/client.ts');
   vi.doUnmock('../../src/utils/contract.ts');
   vi.doUnmock('../../src/utils/logger.ts');
@@ -243,5 +249,43 @@ describe('runStartupChecks: managed ark buffer ratio', () => {
       bufferRatioByAuth: { [VAULT_AUTH_1]: 0n },
     });
     await expect(run()).resolves.toBeUndefined();
+  });
+});
+
+describe('runStartupChecks: BOT_MODE gating', () => {
+  it('skips metavault authorization checks in recovery modes', async () => {
+    const run = await loadStartupChecks({
+      botMode: 'recovery-auto',
+      metavault: { isAllocator: () => false },
+    });
+    await expect(run()).resolves.toBeUndefined();
+  });
+
+  it('runs without a wallet account in recovery-detect mode', async () => {
+    const run = await loadStartupChecks({
+      botMode: 'recovery-detect',
+      clientAccount: undefined,
+    });
+    await expect(run()).resolves.toBeUndefined();
+  });
+
+  it('still enforces metavault authorization in scheduler mode', async () => {
+    const run = await loadStartupChecks({
+      botMode: 'scheduler',
+      metavault: {
+        isAllocator: () => false,
+        owner: () => '0x0000000000000000000000000000000000000097',
+        curator: () => '0x0000000000000000000000000000000000000096',
+      },
+    });
+    await expect(run()).rejects.toThrow('is not authorized to allocate');
+  });
+
+  it('still verifies the chain id in recovery modes', async () => {
+    const run = await loadStartupChecks({
+      botMode: 'recovery-detect',
+      chainId: 5,
+    });
+    await expect(run()).rejects.toThrow('chain id mismatch');
   });
 });

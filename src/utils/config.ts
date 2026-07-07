@@ -2,8 +2,18 @@ import { readFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { isAddress, type Address } from 'viem';
 import { toAsset } from './decimalConversion.ts';
+import { AJNA_MAX_FENWICK_INDEX } from '../ajna/constants.ts';
+import { KNOWN_SWAP_ADAPTERS } from '../ark/swapAdapters/names.ts';
 
 // ============= Raw JSON Types =============
+
+type ArkRecoveryConfig = {
+  enabled?: boolean;
+  refillBucketOverride?: string;
+  maxSlippageBps?: number;
+  maxValueLossBps?: number;
+  minRecoveryValueWad?: string;
+};
 
 type ArkConfig = {
   address: Address;
@@ -18,6 +28,7 @@ type ArkConfig = {
   minMoveAmount?: string;
   minTimeSinceBankruptcy?: number;
   maxAuctionAge?: number;
+  recovery?: ArkRecoveryConfig;
 };
 
 type RawConfig = {
@@ -60,6 +71,20 @@ type RawConfig = {
     requestTimeoutMs?: number;
   };
 
+  recovery?: {
+    dedupWindowMs?: number;
+    maxSlippageBps?: number;
+    maxValueLossBps?: number;
+    minLpMintedBps?: number;
+    swapDeadlineSec?: number;
+    minRecoveryValueWad?: string;
+    swapExecutor?: {
+      adapter: string;
+      apiBaseUrl?: string;
+      expectedSpender?: string;
+    };
+  };
+
   arks: ArkConfig[];
   buffer: {
     address: Address;
@@ -81,6 +106,16 @@ const DEFAULT_MAX_AUCTION_AGE = 259200;
 const DEFAULT_GAS_BUFFER = 50;
 const DEFAULT_GAS = 5000000;
 const DEFAULT_MIN_RATE_DIFF = 10;
+const DEFAULT_RECOVERY_DEDUP_WINDOW_MS = 3_600_000;
+const DEFAULT_RECOVERY_MAX_SLIPPAGE_BPS = 50;
+const DEFAULT_RECOVERY_MAX_VALUE_LOSS_BPS = 100;
+const DEFAULT_RECOVERY_MIN_LP_MINTED_BPS = 9900;
+const DEFAULT_RECOVERY_SWAP_DEADLINE_SEC = 300;
+// Quote-WAD value below which vault-held collateral is ignored by detection: 1e15 WAD
+// = 0.001 quote token, the same "$0.001 blast radius" as QUOTE_DUST_DIVISOR in the
+// recovery keeper. Collateral must be worth more than this before arkKeeper halts or
+// recovery triggers — otherwise a permissionless 1-wei addCollateral griefs both.
+const DEFAULT_RECOVERY_MIN_VALUE_WAD = '1000000000000000';
 
 const PINO_LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
 
@@ -109,6 +144,7 @@ validateTransaction(raw);
 validateRemoteSigner(raw);
 validateBuffer(raw);
 validateArks(raw);
+validateRecovery(raw);
 validateAllocationSum(raw);
 validateNoDuplicateAddresses(raw);
 
@@ -125,6 +161,21 @@ export type ResolvedArkSettings = {
   minMoveAmount: bigint;
   minTimeSinceBankruptcy: bigint;
   maxAuctionAge: number;
+  // Optional so test fixtures predating the recovery floor stay valid; the resolver
+  // always populates it, and detection treats absence as "no floor".
+  minRecoveryValueWad?: bigint;
+};
+
+export type ResolvedRecoverySettings = {
+  enabled: boolean;
+  refillBucketOverride?: bigint;
+  maxSlippageBps: number;
+  maxValueLossBps: number;
+  minLpMintedBps: number;
+  minTimeSinceBankruptcy: bigint;
+  minRecoveryValueWad: bigint;
+  dedupWindowMs: number;
+  swapDeadlineSec: number;
 };
 
 export function resolveArkSettings(ark: ArkConfig): ResolvedArkSettings {
@@ -136,7 +187,31 @@ export function resolveArkSettings(ark: ArkConfig): ResolvedArkSettings {
       ark.minTimeSinceBankruptcy ?? raw.arkGlobal.minTimeSinceBankruptcy!,
     ),
     maxAuctionAge: ark.maxAuctionAge ?? raw.arkGlobal.maxAuctionAge!,
+    minRecoveryValueWad: BigInt(
+      ark.recovery?.minRecoveryValueWad ?? raw.recovery!.minRecoveryValueWad!,
+    ),
   };
+}
+
+export function resolveRecoverySettings(ark: ArkConfig): ResolvedRecoverySettings {
+  const g = raw.recovery!;
+  const r = ark.recovery ?? {};
+  const resolved: ResolvedRecoverySettings = {
+    enabled: r.enabled ?? true,
+    maxSlippageBps: r.maxSlippageBps ?? g.maxSlippageBps!,
+    maxValueLossBps: r.maxValueLossBps ?? g.maxValueLossBps!,
+    minLpMintedBps: g.minLpMintedBps!,
+    minTimeSinceBankruptcy: BigInt(
+      ark.minTimeSinceBankruptcy ?? raw.arkGlobal.minTimeSinceBankruptcy!,
+    ),
+    minRecoveryValueWad: BigInt(r.minRecoveryValueWad ?? g.minRecoveryValueWad!),
+    dedupWindowMs: g.dedupWindowMs!,
+    swapDeadlineSec: g.swapDeadlineSec!,
+  };
+  if (r.refillBucketOverride != null) {
+    resolved.refillBucketOverride = BigInt(r.refillBucketOverride);
+  }
+  return resolved;
 }
 
 type ResolvedOracleConfig = Omit<
@@ -154,6 +229,13 @@ export const config = {
   oracle: raw.oracle as ResolvedOracleConfig,
   arkGlobal: raw.arkGlobal as Required<RawConfig['arkGlobal']>,
   transaction: raw.transaction as Required<RawConfig['transaction']>,
+  // swapExecutor stays optional: unlike the numeric knobs it has no default —
+  // absence means "no adapter configured" and the registry returns the
+  // fail-closed UnconfiguredSwapExecutor.
+  recovery: raw.recovery as Required<
+    Omit<NonNullable<RawConfig['recovery']>, 'swapExecutor'>
+  > &
+    Pick<NonNullable<RawConfig['recovery']>, 'swapExecutor'>,
   remoteSigner: raw.remoteSigner as Required<NonNullable<RawConfig['remoteSigner']>>,
   quoteTokenAddress: quoteTokenAddress.toLowerCase() as Address,
   metavaultAddress: (metavaultAddress || undefined) as Address | undefined,
@@ -402,6 +484,23 @@ function validateAllocationSum(c: RawConfig): void {
 }
 
 function validateNoDuplicateAddresses(c: RawConfig): void {
+  // Recovery (and rebalancing) run per-vault, so a vault listed under two arks
+  // would be operated on twice. The integration test rig deliberately points
+  // every ark entry at the single deployed mock vault, so it opts out.
+  if (process.env.TEST_ENV !== 'true') {
+    const seenVaults = new Map<string, string>();
+    for (const [i, ark] of c.arks.entries()) {
+      const key = ark.vaultAddress.toLowerCase();
+      const prior = seenVaults.get(key);
+      if (prior !== undefined) {
+        throwConfigError(
+          `arks[${i}].vaultAddress (${ark.vaultAddress}) duplicates ${prior} — each vault must appear at most once`,
+        );
+      }
+      seenVaults.set(key, `arks[${i}].vaultAddress`);
+    }
+  }
+
   if (!c.metavaultAddress) return;
 
   const seen = new Map<string, string>();
@@ -418,6 +517,119 @@ function validateNoDuplicateAddresses(c: RawConfig): void {
   remember(c.buffer.address, 'buffer.address');
   for (const [i, ark] of c.arks.entries()) {
     remember(ark.address, `arks[${i}].address`);
+  }
+}
+
+function validateRecovery(c: RawConfig): void {
+  if (c.recovery !== undefined) {
+    requireObject(c.recovery, 'recovery');
+  }
+  c.recovery ??= {};
+
+  if (c.recovery.dedupWindowMs !== undefined) {
+    requireSafeInteger(c.recovery.dedupWindowMs, 'recovery.dedupWindowMs', { min: 1 });
+  }
+  // Slippage is DEX execution slippage (quoted price vs executed price). Should be tight;
+  // 5% is already extreme for routine swaps. Cap at 10% for edge-case illiquidity.
+  if (c.recovery.maxSlippageBps !== undefined) {
+    requireSafeInteger(
+      c.recovery.maxSlippageBps,
+      'recovery.maxSlippageBps',
+      { min: 0, max: 1000 },
+      { detail: 'must be an integer in [0, 1000]' },
+    );
+  }
+  // Value-loss is vault-debt vs swap output. Allow up to 50% for degraded market
+  // conditions, but anything beyond that is an obvious misconfiguration.
+  if (c.recovery.maxValueLossBps !== undefined) {
+    requireSafeInteger(
+      c.recovery.maxValueLossBps,
+      'recovery.maxValueLossBps',
+      { min: 0, max: 5000 },
+      { detail: 'must be an integer in [0, 5000]' },
+    );
+  }
+  // minLpMintedBps caps the health check at <10000: a bucket's round-trip quote is always
+  // <= deposit (accrued interest aside), so 10000 (100%) is mathematically unachievable
+  // and would halt every refill. Reject at load time to avoid the foot-gun.
+  if (c.recovery.minLpMintedBps !== undefined) {
+    requireSafeInteger(
+      c.recovery.minLpMintedBps,
+      'recovery.minLpMintedBps',
+      { min: 0, max: 9999 },
+      { detail: 'must be an integer in [0, 9999]' },
+    );
+  }
+  if (c.recovery.swapDeadlineSec !== undefined) {
+    requireSafeInteger(
+      c.recovery.swapDeadlineSec,
+      'recovery.swapDeadlineSec',
+      { min: 60, max: 3600 },
+      { detail: 'must be an integer in [60, 3600] seconds' },
+    );
+  }
+  if (c.recovery.minRecoveryValueWad !== undefined) {
+    requireNonNegativeBigIntString(c.recovery.minRecoveryValueWad, 'recovery.minRecoveryValueWad');
+  }
+  if (c.recovery.swapExecutor !== undefined) {
+    requireObject(c.recovery.swapExecutor, 'recovery.swapExecutor');
+    const se = c.recovery.swapExecutor;
+    requireString(se.adapter, 'recovery.swapExecutor.adapter');
+    if (!(KNOWN_SWAP_ADAPTERS as readonly string[]).includes(se.adapter)) {
+      throwConfigError(
+        `recovery.swapExecutor.adapter must be one of ${KNOWN_SWAP_ADAPTERS.join(', ')} (got '${se.adapter}')`,
+      );
+    }
+    if (se.apiBaseUrl !== undefined) {
+      requireString(se.apiBaseUrl, 'recovery.swapExecutor.apiBaseUrl');
+    }
+    if (se.expectedSpender !== undefined) {
+      requireAddress(se.expectedSpender, 'recovery.swapExecutor.expectedSpender');
+    }
+  }
+
+  c.recovery.dedupWindowMs ??= DEFAULT_RECOVERY_DEDUP_WINDOW_MS;
+  c.recovery.maxSlippageBps ??= DEFAULT_RECOVERY_MAX_SLIPPAGE_BPS;
+  c.recovery.maxValueLossBps ??= DEFAULT_RECOVERY_MAX_VALUE_LOSS_BPS;
+  c.recovery.minLpMintedBps ??= DEFAULT_RECOVERY_MIN_LP_MINTED_BPS;
+  c.recovery.swapDeadlineSec ??= DEFAULT_RECOVERY_SWAP_DEADLINE_SEC;
+  c.recovery.minRecoveryValueWad ??= DEFAULT_RECOVERY_MIN_VALUE_WAD;
+
+  for (const [i, ark] of c.arks.entries()) {
+    const r = ark.recovery;
+    if (r == null) continue;
+    const at = `arks[${i}].recovery`;
+    requireObject(r, at);
+    if (r.enabled !== undefined) {
+      requireBoolean(r.enabled, `${at}.enabled`);
+    }
+    if (r.maxSlippageBps != null) {
+      requireSafeInteger(
+        r.maxSlippageBps,
+        `${at}.maxSlippageBps`,
+        { min: 0, max: 1000 },
+        { detail: 'must be an integer in [0, 1000]' },
+      );
+    }
+    if (r.maxValueLossBps != null) {
+      requireSafeInteger(
+        r.maxValueLossBps,
+        `${at}.maxValueLossBps`,
+        { min: 0, max: 5000 },
+        { detail: 'must be an integer in [0, 5000]' },
+      );
+    }
+    if (r.refillBucketOverride != null) {
+      requireNonNegativeBigIntString(r.refillBucketOverride, `${at}.refillBucketOverride`);
+      if (BigInt(r.refillBucketOverride) > AJNA_MAX_FENWICK_INDEX) {
+        throwConfigError(
+          `${at}.refillBucketOverride must be a valid Ajna bucket index (0-${AJNA_MAX_FENWICK_INDEX})`,
+        );
+      }
+    }
+    if (r.minRecoveryValueWad != null) {
+      requireNonNegativeBigIntString(r.minRecoveryValueWad, `${at}.minRecoveryValueWad`);
+    }
   }
 }
 

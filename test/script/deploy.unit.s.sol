@@ -7,6 +7,7 @@ import {VaultAuth} from "../../lib/4626-ajna-vault/src/VaultAuth.sol";
 import {MockVault} from "../mocks/contracts/MockVault.sol";
 import {MockVaultAuth} from "../mocks/contracts/MockVaultAuth.sol";
 import {MockChronicle} from "../mocks/contracts/MockChronicle.sol";
+import {MockPool} from "../mocks/contracts/MockPool.sol";
 import {IPool} from "ajna-core/interfaces/pool/IPool.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
@@ -34,7 +35,6 @@ contract DeployScript is Script, StdCheats {
             vaultAuth
         );
 
-        mockVaultAddress = address(new MockVault(address(0)));
         mockVaultAuthAddress = address(new MockVaultAuth());
         mockChronicleAddress = address(new MockChronicle());
 
@@ -43,6 +43,13 @@ contract DeployScript is Script, StdCheats {
 
         IERC20(vault.asset()).approve(address(vault), type(uint256).max);
         vault.deposit(100 * (10 ** 18), deployerAddress);
+
+        // Deploy mock pool + mock vault AFTER the real vault deposit so additional
+        // deployments don't shift block position / interest accrual for existing
+        // vault tests that depend on precise LP rounding.
+        address mockPoolAddress = address(new MockPool());
+        mockVaultAddress = address(new MockVault(mockPoolAddress));
+        MockVault(mockVaultAddress).setAuth(mockVaultAuthAddress);
         vm.stopBroadcast();
 
         string memory addresses = string.concat(

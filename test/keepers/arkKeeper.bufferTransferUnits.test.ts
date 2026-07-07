@@ -32,6 +32,8 @@ function buildVault({
     moveToBuffer: vi.fn().mockResolvedValue(TX_HASH),
     moveFromBuffer: vi.fn().mockResolvedValue(TX_HASH),
     getBuckets: vi.fn().mockResolvedValue(buckets),
+    getVaultLps: vi.fn().mockResolvedValue(0n),
+    lpToCollateral: vi.fn().mockResolvedValue(0n),
     getBufferTotal: vi.fn().mockResolvedValue(bufferTotal),
     getLup: vi.fn().mockResolvedValue(110n),
     getHtp: vi.fn().mockResolvedValue(90n),

@@ -4,6 +4,10 @@ import {MockBuffer} from './MockBuffer.sol';
 import {MockPoolInfoUtils} from './MockPoolInfoUtils.sol';
 
 contract MockVault {
+    event Move(address indexed caller, address indexed pool, uint256 fromBucket, uint256 toBucket, uint256 amount);
+    event MoveToBuffer(address indexed caller, address indexed pool, uint256 bucket, uint256 amount);
+    event MoveFromBuffer(address indexed caller, address indexed pool, uint256 bucket, uint256 amount);
+
     MockPoolInfoUtils private immutable INFO;
     MockBuffer private immutable BUFFER;
     address private immutable POOL;
@@ -42,16 +46,19 @@ contract MockVault {
     function move(uint256 _fromBucket, uint256 _toBucket, uint256 _amount) public {
         _removeFromBucket(_amount, _fromBucket);
         _addToBucket(_amount, _toBucket);
+        emit Move(msg.sender, POOL, _fromBucket, _toBucket, _amount);
     }
 
     function moveToBuffer(uint256 _fromBucket, uint256 _amount) public {
         _removeFromBucket(_amount, _fromBucket);
         BUFFER.addToBuffer(_amount);
+        emit MoveToBuffer(msg.sender, POOL, _fromBucket, _amount);
     }
 
     function moveFromBuffer(uint256 _toBucket, uint256 _amount) public {
         BUFFER.removeFromBuffer(_amount);
         _addToBucket(_amount, _toBucket);
+        emit MoveFromBuffer(msg.sender, POOL, _toBucket, _amount);
     }
 
     function setAssetDecimals(uint8 _decimals) public {

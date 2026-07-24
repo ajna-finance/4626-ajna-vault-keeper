@@ -1,28 +1,29 @@
 import { log } from '../utils/logger.ts';
-import { env } from '../utils/env.ts';
+import { config, type ResolvedArkOracle } from '../utils/config.ts';
 import { toAsset } from '../utils/decimalConversion.ts';
 import { getOffchainPrice } from './offchain.ts';
 import { getOnchainPrice } from './onchain.ts';
+import { AJNA_MAX_PRICE, AJNA_MIN_PRICE, AJNA_PRICE_DECIMALS } from '../ajna/constants.ts';
 
-type PriceSource = () => Promise<bigint | number>;
+export async function getPrice(oracle?: ResolvedArkOracle): Promise<bigint> {
+  const fixedPrice = oracle ? oracle.fixedPrice : config.oracle.fixedPrice;
+  if (fixedPrice != null) return getFixedPrice(fixedPrice);
 
-const SOURCES: Record<'onchain' | 'offchain', PriceSource> = {
-  onchain: getOnchainPrice,
-  offchain: getOffchainPrice,
-};
-
-export async function getPrice(): Promise<bigint> {
-  if (env.FIXED_PRICE && env.FIXED_PRICE > 0) return getFixedPrice(env.FIXED_PRICE);
+  const sources: Record<'onchain' | 'offchain', () => Promise<bigint>> = {
+    onchain: () => getOnchainPrice(oracle?.onchainCollateralAddress),
+    offchain: () => getOffchainPrice(oracle?.collateralTokenAddress),
+  };
 
   const errors: Error[] = [];
-  const order: ('onchain' | 'offchain')[] = env.ONCHAIN_ORACLE_PRIMARY
+  const order: ('onchain' | 'offchain')[] = config.oracle.onchainPrimary
     ? ['onchain', 'offchain']
     : ['offchain', 'onchain'];
 
   for (const tag of order) {
     try {
-      const price = await SOURCES[tag]();
-      return typeof price === 'bigint' ? price : toAsset(price);
+      const price = await sources[tag]();
+      validateLivePrice(price, tag);
+      return price;
     } catch (err) {
       const e = new Error(`${tag} price query failed`, { cause: err });
       errors.push(e);
@@ -33,8 +34,16 @@ export async function getPrice(): Promise<bigint> {
   throw new AggregateError(errors, 'unable to fetch price from either source');
 }
 
-async function getFixedPrice(rawPrice: number): Promise<bigint> {
-  const price = await toAsset(rawPrice);
+function validateLivePrice(price: bigint, tag: string): void {
+  if (price <= 0n) throw new Error(`${tag} price must be positive`);
+  if (price < AJNA_MIN_PRICE || price > AJNA_MAX_PRICE) {
+    throw new Error(`${tag} price is outside Ajna price range`);
+  }
+}
+
+async function getFixedPrice(rawPrice: string): Promise<bigint> {
+  const price = toAsset(rawPrice, AJNA_PRICE_DECIMALS);
+  if (price <= 0n) throw new Error('fixed price must be positive');
   log.info({ event: 'keeper_price_fixed', rawPrice, price }, `using fixed price: ${price}`);
   return price;
 }

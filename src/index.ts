@@ -1,6 +1,12 @@
-import { setUpCrashHandlers } from './utils/logger';
-import { startScheduler } from './utils/scheduler';
-import { run } from './keeper';
+import 'dotenv/config';
+import { setUpCrashHandlers } from './utils/logger.ts';
+import { logStartupWarnings } from './utils/startupWarnings.ts';
+import { initClient } from './utils/client.ts';
+import { runStartupChecks } from './utils/startupChecks.ts';
+import { startScheduler } from './utils/scheduler.ts';
 
 setUpCrashHandlers();
-startScheduler(run);
+logStartupWarnings();
+await initClient();
+await runStartupChecks();
+startScheduler();

@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist-tools",
+    "rootDir": ".",
+    "rewriteRelativeImportExtensions": true
+  },
+  "include": ["scripts/import-key.ts"]
+}

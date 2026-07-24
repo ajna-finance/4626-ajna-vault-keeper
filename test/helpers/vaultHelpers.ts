@@ -1,33 +1,69 @@
-import { contract } from '../../src/utils/contract.ts';
+import { contract } from '../../src/utils/contract';
+import { config } from '../../src/utils/config';
+import { createVault } from '../../src/ark/vault';
 import type { Address } from 'viem';
+import { waitForWrite } from './transactions';
 
-const vaultAuth = contract('vaultAuth');
-const chronicle = contract('chronicle');
-const poolInfoUtils = contract('poolInfoUtils');
-const vault = contract('vault');
-const pool = contract('pool');
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
-export const setBufferRatio = (ratio: bigint) => vaultAuth().write.setBufferRatio([ratio]);
-export const setMinBucketIndex = (index: bigint) => vaultAuth().write.setMinBucketIndex([index]);
+function getVaultAddr(): Address {
+  return (
+    process.env.USE_MOCKS === 'true' ? process.env.MOCK_VAULT_ADDRESS : config.arks[0]!.vaultAddress
+  ) as Address;
+}
 
-export const setPaused = (status: boolean) => vault().write.setPaused(status);
+function getVaultAuthAddr(): Address {
+  return (
+    process.env.USE_MOCKS === 'true'
+      ? process.env.MOCK_VAULT_AUTH_ADDRESS
+      : config.arks[0]!.vaultAuthAddress
+  ) as Address;
+}
 
-const _setPrice = (price: bigint) => chronicle().write.setPrice(price);
+const vaultAuth = () => contract('vaultAuth', getVaultAuthAddr())();
+const chronicle = () => contract('chronicle', process.env.MOCK_CHRONICLE_ADDRESS as Address)();
+const vault = () => contract('vault', getVaultAddr())();
 
-export const setBankruptcyTime = (timestamp: bigint) => pool().write.setBankruptcyTime(timestamp);
-export const setLps = (lps: bigint) => pool().write.setLps(lps);
+const getPool = async () => {
+  const poolAddr = await createVault(getVaultAddr(), getVaultAuthAddr()).getPoolAddress();
+  return contract('pool', poolAddr)();
+};
 
-export const setAuctionStatus = (
+const getPoolInfoUtils = async () => {
+  const v = createVault(getVaultAddr(), getVaultAuthAddr());
+  const addr = (await v.getPoolInfoUtilsAddress()) as Address;
+  return contract('poolInfoUtils', addr)();
+};
+
+export const setBufferRatio = (ratio: bigint) =>
+  waitForWrite(vaultAuth().write.setBufferRatio([ratio]));
+export const setMinBucketIndex = (index: bigint) =>
+  waitForWrite(vaultAuth().write.setMinBucketIndex([index]));
+
+export const setPaused = (status: boolean) => waitForWrite(vault().write.setPaused(status));
+
+const _setPrice = (price: bigint) => waitForWrite(chronicle().write.setPrice(price));
+
+export const setBankruptcyTime = async (timestamp: bigint) =>
+  waitForWrite((await getPool()).write.setBankruptcyTime(timestamp));
+export const setLps = async (lps: bigint) => waitForWrite((await getPool()).write.setLps(lps));
+
+export const setAuctionStatus = async (
   borrower: Address,
   kickTime: bigint,
   collateral: bigint,
   debt: bigint,
-) => poolInfoUtils().write.setAuctionStatus(borrower, kickTime, collateral, debt);
-const _setLup = (lup: bigint) => poolInfoUtils().write.setLup(lup);
-const _setHtp = (htp: bigint) => poolInfoUtils().write.setHtp(htp);
+) =>
+  waitForWrite(
+    (await getPoolInfoUtils()).write.setAuctionStatus(borrower, kickTime, collateral, debt),
+  );
+export const setAuctionBorrowers = async (borrowers: Address[]) =>
+  waitForWrite((await getPool()).write.setAuctionBorrowers([borrowers]));
+const _setLup = async (lup: bigint) => waitForWrite((await getPoolInfoUtils()).write.setLup(lup));
+const _setHtp = async (htp: bigint) => waitForWrite((await getPoolInfoUtils()).write.setHtp(htp));
 
 const _addBucket = (index: bigint, price: bigint, amount: bigint) =>
-  vault().write.addBucket(index, price, amount);
+  waitForWrite(vault().write.addBucket(index, price, amount));
 
 export function useMocks() {
   process.env.USE_MOCKS = 'true';

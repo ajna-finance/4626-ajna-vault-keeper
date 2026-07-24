@@ -1,0 +1,627 @@
+import type { Abi } from 'viem';
+
+export const aTokenVaultAbi = [
+  // ERC-20 events
+  {
+    type: 'event',
+    name: 'Transfer',
+    inputs: [
+      { name: 'from', type: 'address', indexed: true },
+      { name: 'to', type: 'address', indexed: true },
+      { name: 'value', type: 'uint256', indexed: false },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
+    name: 'Approval',
+    inputs: [
+      { name: 'owner', type: 'address', indexed: true },
+      { name: 'spender', type: 'address', indexed: true },
+      { name: 'value', type: 'uint256', indexed: false },
+    ],
+    anonymous: false,
+  },
+  // ERC-4626 events
+  {
+    type: 'event',
+    name: 'Deposit',
+    inputs: [
+      { name: 'caller', type: 'address', indexed: true },
+      { name: 'owner', type: 'address', indexed: true },
+      { name: 'assets', type: 'uint256', indexed: false },
+      { name: 'shares', type: 'uint256', indexed: false },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
+    name: 'Withdraw',
+    inputs: [
+      { name: 'caller', type: 'address', indexed: true },
+      { name: 'receiver', type: 'address', indexed: true },
+      { name: 'owner', type: 'address', indexed: true },
+      { name: 'assets', type: 'uint256', indexed: false },
+      { name: 'shares', type: 'uint256', indexed: false },
+    ],
+    anonymous: false,
+  },
+  // ATokenVault-specific events
+  {
+    type: 'event',
+    name: 'FeeUpdated',
+    inputs: [
+      { name: 'oldFee', type: 'uint256', indexed: true },
+      { name: 'newFee', type: 'uint256', indexed: true },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
+    name: 'FeesWithdrawn',
+    inputs: [
+      { name: 'to', type: 'address', indexed: true },
+      { name: 'amount', type: 'uint256', indexed: true },
+      { name: 'newVaultBalance', type: 'uint256', indexed: false },
+      { name: 'newTotalFeesAccrued', type: 'uint256', indexed: false },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
+    name: 'YieldAccrued',
+    inputs: [
+      { name: 'accruedYield', type: 'uint256', indexed: false },
+      { name: 'newFeesFromYield', type: 'uint256', indexed: false },
+      { name: 'newVaultBalance', type: 'uint256', indexed: false },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
+    name: 'RewardsClaimed',
+    inputs: [
+      { name: 'to', type: 'address', indexed: true },
+      { name: 'rewardsList', type: 'address[]', indexed: false },
+      { name: 'claimedAmounts', type: 'uint256[]', indexed: false },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
+    name: 'EmergencyRescue',
+    inputs: [
+      { name: 'token', type: 'address', indexed: true },
+      { name: 'to', type: 'address', indexed: true },
+      { name: 'amount', type: 'uint256', indexed: false },
+    ],
+    anonymous: false,
+  },
+
+  // ERC-20 functions
+  {
+    type: 'function',
+    name: 'name',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'string' }],
+  },
+  {
+    type: 'function',
+    name: 'symbol',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'string' }],
+  },
+  {
+    type: 'function',
+    name: 'decimals',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint8' }],
+  },
+  {
+    type: 'function',
+    name: 'totalSupply',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'balanceOf',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'allowance',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'owner', type: 'address' },
+      { name: 'spender', type: 'address' },
+    ],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'transfer',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'to', type: 'address' },
+      { name: 'value', type: 'uint256' },
+    ],
+    outputs: [{ name: '', type: 'bool' }],
+  },
+  {
+    type: 'function',
+    name: 'transferFrom',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'from', type: 'address' },
+      { name: 'to', type: 'address' },
+      { name: 'value', type: 'uint256' },
+    ],
+    outputs: [{ name: '', type: 'bool' }],
+  },
+  {
+    type: 'function',
+    name: 'approve',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'spender', type: 'address' },
+      { name: 'value', type: 'uint256' },
+    ],
+    outputs: [{ name: '', type: 'bool' }],
+  },
+
+  // ERC-4626 functions
+  {
+    type: 'function',
+    name: 'asset',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'totalAssets',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'totalManagedAssets', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'convertToShares',
+    stateMutability: 'view',
+    inputs: [{ name: 'assets', type: 'uint256' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'convertToAssets',
+    stateMutability: 'view',
+    inputs: [{ name: 'shares', type: 'uint256' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'maxDeposit',
+    stateMutability: 'view',
+    inputs: [{ name: '', type: 'address' }],
+    outputs: [{ name: 'maxAssets', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'previewDeposit',
+    stateMutability: 'view',
+    inputs: [{ name: 'assets', type: 'uint256' }],
+    outputs: [{ name: 'shares', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'deposit',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'assets', type: 'uint256' },
+      { name: 'receiver', type: 'address' },
+    ],
+    outputs: [{ name: 'shares', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'depositATokens',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'assets', type: 'uint256' },
+      { name: 'receiver', type: 'address' },
+    ],
+    outputs: [{ name: 'shares', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'depositWithSig',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'assets', type: 'uint256' },
+      { name: 'receiver', type: 'address' },
+      { name: 'depositor', type: 'address' },
+      {
+        name: 'sig',
+        type: 'tuple',
+        components: [
+          { name: 'v', type: 'uint8' },
+          { name: 'r', type: 'bytes32' },
+          { name: 's', type: 'bytes32' },
+          { name: 'deadline', type: 'uint256' },
+        ],
+      },
+    ],
+    outputs: [{ name: 'shares', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'depositATokensWithSig',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'assets', type: 'uint256' },
+      { name: 'receiver', type: 'address' },
+      { name: 'depositor', type: 'address' },
+      {
+        name: 'sig',
+        type: 'tuple',
+        components: [
+          { name: 'v', type: 'uint8' },
+          { name: 'r', type: 'bytes32' },
+          { name: 's', type: 'bytes32' },
+          { name: 'deadline', type: 'uint256' },
+        ],
+      },
+    ],
+    outputs: [{ name: 'shares', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'maxMint',
+    stateMutability: 'view',
+    inputs: [{ name: '', type: 'address' }],
+    outputs: [{ name: 'maxShares', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'previewMint',
+    stateMutability: 'view',
+    inputs: [{ name: 'shares', type: 'uint256' }],
+    outputs: [{ name: 'assets', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'mint',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'shares', type: 'uint256' },
+      { name: 'receiver', type: 'address' },
+    ],
+    outputs: [{ name: 'assets', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'mintWithATokens',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'shares', type: 'uint256' },
+      { name: 'receiver', type: 'address' },
+    ],
+    outputs: [{ name: 'assets', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'mintWithSig',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'shares', type: 'uint256' },
+      { name: 'receiver', type: 'address' },
+      { name: 'depositor', type: 'address' },
+      {
+        name: 'sig',
+        type: 'tuple',
+        components: [
+          { name: 'v', type: 'uint8' },
+          { name: 'r', type: 'bytes32' },
+          { name: 's', type: 'bytes32' },
+          { name: 'deadline', type: 'uint256' },
+        ],
+      },
+    ],
+    outputs: [{ name: 'assets', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'mintWithATokensWithSig',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'shares', type: 'uint256' },
+      { name: 'receiver', type: 'address' },
+      { name: 'depositor', type: 'address' },
+      {
+        name: 'sig',
+        type: 'tuple',
+        components: [
+          { name: 'v', type: 'uint8' },
+          { name: 'r', type: 'bytes32' },
+          { name: 's', type: 'bytes32' },
+          { name: 'deadline', type: 'uint256' },
+        ],
+      },
+    ],
+    outputs: [{ name: 'assets', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'maxWithdraw',
+    stateMutability: 'view',
+    inputs: [{ name: 'owner', type: 'address' }],
+    outputs: [{ name: 'maxAssets', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'previewWithdraw',
+    stateMutability: 'view',
+    inputs: [{ name: 'assets', type: 'uint256' }],
+    outputs: [{ name: 'shares', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'withdraw',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'assets', type: 'uint256' },
+      { name: 'receiver', type: 'address' },
+      { name: 'owner', type: 'address' },
+    ],
+    outputs: [{ name: 'shares', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'withdrawATokens',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'assets', type: 'uint256' },
+      { name: 'receiver', type: 'address' },
+      { name: 'owner', type: 'address' },
+    ],
+    outputs: [{ name: 'shares', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'withdrawWithSig',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'assets', type: 'uint256' },
+      { name: 'receiver', type: 'address' },
+      { name: 'owner', type: 'address' },
+      {
+        name: 'sig',
+        type: 'tuple',
+        components: [
+          { name: 'v', type: 'uint8' },
+          { name: 'r', type: 'bytes32' },
+          { name: 's', type: 'bytes32' },
+          { name: 'deadline', type: 'uint256' },
+        ],
+      },
+    ],
+    outputs: [{ name: 'shares', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'withdrawATokensWithSig',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'assets', type: 'uint256' },
+      { name: 'receiver', type: 'address' },
+      { name: 'owner', type: 'address' },
+      {
+        name: 'sig',
+        type: 'tuple',
+        components: [
+          { name: 'v', type: 'uint8' },
+          { name: 'r', type: 'bytes32' },
+          { name: 's', type: 'bytes32' },
+          { name: 'deadline', type: 'uint256' },
+        ],
+      },
+    ],
+    outputs: [{ name: 'shares', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'maxRedeem',
+    stateMutability: 'view',
+    inputs: [{ name: 'owner', type: 'address' }],
+    outputs: [{ name: 'maxShares', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'previewRedeem',
+    stateMutability: 'view',
+    inputs: [{ name: 'shares', type: 'uint256' }],
+    outputs: [{ name: 'assets', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'redeem',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'shares', type: 'uint256' },
+      { name: 'receiver', type: 'address' },
+      { name: 'owner', type: 'address' },
+    ],
+    outputs: [{ name: 'assets', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'redeemAsATokens',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'shares', type: 'uint256' },
+      { name: 'receiver', type: 'address' },
+      { name: 'owner', type: 'address' },
+    ],
+    outputs: [{ name: 'assets', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'redeemWithSig',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'shares', type: 'uint256' },
+      { name: 'receiver', type: 'address' },
+      { name: 'owner', type: 'address' },
+      {
+        name: 'sig',
+        type: 'tuple',
+        components: [
+          { name: 'v', type: 'uint8' },
+          { name: 'r', type: 'bytes32' },
+          { name: 's', type: 'bytes32' },
+          { name: 'deadline', type: 'uint256' },
+        ],
+      },
+    ],
+    outputs: [{ name: 'assets', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'redeemWithATokensWithSig',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'shares', type: 'uint256' },
+      { name: 'receiver', type: 'address' },
+      { name: 'owner', type: 'address' },
+      {
+        name: 'sig',
+        type: 'tuple',
+        components: [
+          { name: 'v', type: 'uint8' },
+          { name: 'r', type: 'bytes32' },
+          { name: 's', type: 'bytes32' },
+          { name: 'deadline', type: 'uint256' },
+        ],
+      },
+    ],
+    outputs: [{ name: 'assets', type: 'uint256' }],
+  },
+
+  // ATokenVault view functions
+  {
+    type: 'function',
+    name: 'POOL_ADDRESSES_PROVIDER',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'AAVE_POOL',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'ATOKEN',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'UNDERLYING',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'REFERRAL_CODE',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint16' }],
+  },
+  {
+    type: 'function',
+    name: 'domainSeparator',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'bytes32' }],
+  },
+  {
+    type: 'function',
+    name: 'getClaimableFees',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'getSigNonce',
+    stateMutability: 'view',
+    inputs: [{ name: 'signer', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'getLastVaultBalance',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'getFee',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+
+  // ATokenVault write functions
+  {
+    type: 'function',
+    name: 'setFee',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'newFee', type: 'uint256' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'withdrawFees',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'to', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'claimRewards',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'to', type: 'address' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'emergencyRescue',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'token', type: 'address' },
+      { name: 'to', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [],
+  },
+] as const satisfies Abi;
+
+export type ATokenVaultAbi = typeof aTokenVaultAbi;

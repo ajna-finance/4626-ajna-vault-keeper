@@ -1,0 +1,66 @@
+{
+  "chainId": 1,
+  "quoteTokenAddress": "0x6b175474e89094c44da98b954eedeac495271d0f",
+  "collateralTokenAddress": "0x6b175474e89094c44da98b954eedeac495271d0f",
+  "metavaultAddress": "",
+  "keeper": {
+    "intervalMs": 43200000,
+    "logLevel": "warn",
+    "haltIfLupBelowHtp": true
+  },
+  "oracle": {
+    "apiUrl": "https://api.coingecko.com/api/v3/simple/token_price/ethereum?contract_addresses=0x6B175474E89094C44Da98b954EedeAC495271d0F&vs_currencies=usd",
+    "onchainPrimary": true,
+    "onchainCollateralAddress": "0x74661a9ea74fD04975c6eBc6B155Abf8f885636c",
+    "onchainQuoteAddress": "0x74661a9ea74fD04975c6eBc6B155Abf8f885636c",
+    "onchainMaxStaleness": null,
+    "fixedPrice": null,
+    "futureSkewTolerance": 120
+  },
+  "arkGlobal": {
+    "optimalBucketDiff": 1,
+    "bufferPadding": "100000000000000",
+    "minMoveAmount": "1000001",
+    "minTimeSinceBankruptcy": 259200,
+    "maxAuctionAge": 259200
+  },
+  "transaction": {
+    "gasBuffer": 100,
+    "defaultGas": 5000000,
+    "confirmations": 1
+  },
+  "arks": [
+    {
+      "address": "",
+      "vaultAddress": "",
+      "vaultAuthAddress": "",
+      "allocation": {
+        "min": 5,
+        "max": 20
+      }
+    },
+    {
+      "address": "",
+      "vaultAddress": "",
+      "vaultAuthAddress": "",
+      "allocation": {
+        "min": 5,
+        "max": 20
+      }
+    },
+    {
+      "address": "",
+      "vaultAddress": "",
+      "vaultAuthAddress": "",
+      "allocation": {
+        "min": 5,
+        "max": 20
+      }
+    }
+  ],
+  "buffer": {
+    "address": "",
+    "allocation": 40
+  },
+  "minRateDiff": 10
+}

@@ -1,15 +1,21 @@
-import 'dotenv/config';
+import { readFileSync } from 'fs';
 
-const REQUIRED = [
-  'RPC_URL',
-  'QUOTE_TOKEN_ADDRESS',
-  'PRIVATE_KEY',
-  'VAULT_ADDRESS',
-  'VAULT_AUTH_ADDRESS',
-  'OPTIMAL_BUCKET_DIFF',
-  'KEEPER_INTERVAL_MS',
-  'SUBGRAPH_URL',
-] as const;
+const REQUIRED = ['RPC_URL'] as const;
+
+function readOptionalEnv(key: string): string | undefined {
+  const value = process.env[key]?.trim();
+  return value ? value : undefined;
+}
+
+function assertReadableFile(envVar: string, path: string): void {
+  try {
+    readFileSync(path);
+  } catch (cause) {
+    throw new Error(`${envVar} points to a file that is not readable: '${path}'`, { cause });
+  }
+}
+
+export type CredentialMode = 'privateKey' | 'keystore' | 'remoteSigner';
 
 for (const key of REQUIRED) {
   if (!process.env[key]) {
@@ -17,75 +23,99 @@ for (const key of REQUIRED) {
   }
 }
 
-if (!process.env.ONCHAIN_ORACLE_PRIMARY && !process.env.FIXED_PRICE) {
-  throw new Error('Oracle API URL must be specified');
+const PRIVATE_KEY = readOptionalEnv('PRIVATE_KEY');
+const KEYSTORE_PATH = readOptionalEnv('KEYSTORE_PATH');
+const REMOTE_SIGNER_URL = readOptionalEnv('REMOTE_SIGNER_URL');
+const REMOTE_SIGNER_ADDRESS = readOptionalEnv('REMOTE_SIGNER_ADDRESS');
+const REMOTE_SIGNER_ALLOW_INSECURE = readOptionalEnv('REMOTE_SIGNER_ALLOW_INSECURE') === 'true';
+const REMOTE_SIGNER_AUTH_TOKEN = readOptionalEnv('REMOTE_SIGNER_AUTH_TOKEN');
+const REMOTE_SIGNER_TLS_CLIENT_CERT = readOptionalEnv('REMOTE_SIGNER_TLS_CLIENT_CERT');
+const REMOTE_SIGNER_TLS_CLIENT_KEY = readOptionalEnv('REMOTE_SIGNER_TLS_CLIENT_KEY');
+const REMOTE_SIGNER_TLS_CLIENT_KEY_PASSWORD = readOptionalEnv(
+  'REMOTE_SIGNER_TLS_CLIENT_KEY_PASSWORD',
+);
+const REMOTE_SIGNER_TLS_CA = readOptionalEnv('REMOTE_SIGNER_TLS_CA');
+
+if (REMOTE_SIGNER_URL !== undefined) {
+  let parsed: URL;
+  try {
+    parsed = new URL(REMOTE_SIGNER_URL);
+  } catch {
+    throw new Error(`REMOTE_SIGNER_URL is not a valid URL: '${REMOTE_SIGNER_URL}'`);
+  }
+
+  if (parsed.protocol === 'http:') {
+    if (!REMOTE_SIGNER_ALLOW_INSECURE) {
+      throw new Error(
+        'REMOTE_SIGNER_URL must use https. To allow http for local testing, set REMOTE_SIGNER_ALLOW_INSECURE=true.',
+      );
+    }
+  } else if (parsed.protocol !== 'https:') {
+    throw new Error(`REMOTE_SIGNER_URL must use https (got '${parsed.protocol}')`);
+  }
+}
+
+if (Boolean(REMOTE_SIGNER_URL) !== Boolean(REMOTE_SIGNER_ADDRESS)) {
+  throw new Error('REMOTE_SIGNER_URL and REMOTE_SIGNER_ADDRESS must both be specified together');
+}
+
+if (Boolean(REMOTE_SIGNER_TLS_CLIENT_CERT) !== Boolean(REMOTE_SIGNER_TLS_CLIENT_KEY)) {
+  throw new Error(
+    'REMOTE_SIGNER_TLS_CLIENT_CERT and REMOTE_SIGNER_TLS_CLIENT_KEY must both be specified together',
+  );
+}
+
+if (
+  REMOTE_SIGNER_TLS_CLIENT_KEY_PASSWORD !== undefined &&
+  REMOTE_SIGNER_TLS_CLIENT_KEY === undefined
+) {
+  throw new Error(
+    'REMOTE_SIGNER_TLS_CLIENT_KEY_PASSWORD requires REMOTE_SIGNER_TLS_CLIENT_KEY to be set',
+  );
+}
+
+if (REMOTE_SIGNER_TLS_CLIENT_CERT !== undefined) {
+  assertReadableFile('REMOTE_SIGNER_TLS_CLIENT_CERT', REMOTE_SIGNER_TLS_CLIENT_CERT);
+}
+
+if (REMOTE_SIGNER_TLS_CLIENT_KEY !== undefined) {
+  assertReadableFile('REMOTE_SIGNER_TLS_CLIENT_KEY', REMOTE_SIGNER_TLS_CLIENT_KEY);
+}
+
+if (REMOTE_SIGNER_TLS_CA !== undefined) {
+  assertReadableFile('REMOTE_SIGNER_TLS_CA', REMOTE_SIGNER_TLS_CA);
+}
+
+const credentialModes = [
+  PRIVATE_KEY ? 'privateKey' : null,
+  KEYSTORE_PATH ? 'keystore' : null,
+  REMOTE_SIGNER_URL ? 'remoteSigner' : null,
+].filter((mode): mode is CredentialMode => mode !== null);
+
+if (credentialModes.length !== 1) {
+  throw new Error(
+    'Configure exactly one credential mode: PRIVATE_KEY, KEYSTORE_PATH, or REMOTE_SIGNER_URL with REMOTE_SIGNER_ADDRESS',
+  );
 }
 
 if (process.env.ORACLE_API_KEY && !process.env.ORACLE_API_TIER) {
   throw new Error('API key tier must be specified');
 }
 
-if (process.env.ONCHAIN_ORACLE_PRIMARY === 'true' && !process.env.ONCHAIN_ORACLE_ADDRESS) {
-  throw new Error('oracle smart contract address must be specified');
-}
-
-const gasBuffer =
-  !process.env.GAS_BUFFER || BigInt(process.env.GAS_BUFFER) === 0n
-    ? 50n
-    : BigInt(process.env.GAS_BUFFER);
-
-const defaultGas = process.env.DEFAULT_GAS ?? 1500000;
-
-const bufferPadding = process.env.BUFFER_PADDING ?? 100000000000000;
-
-// Assumes LP_DUST = 1e6 + 1, because assetDecimals cannot be queried here.
-// If LP_DUST != 1e6 + 1, MIN_MOVE_AMOUNT should be set as an environment variable.
-const minAmount = process.env.MIN_MOVE_AMOUNT ?? 1000001;
-
-// Defaults to 72 hours (seconds)
-const minTimeSinceBankruptcy = process.env.MIN_TIME_SINCE_BANKRUPTCY ?? 259200;
-
-// Defaults to 72 hours (seconds)
-const maxAuctionAge = process.env.MAX_AUCTION_AGE ?? 259200;
-
-// Defaults to 2 minutes (seconds)
-const futureSkewTolerance = process.env.FUTURE_SKEW_TOLERANCE ?? 120;
-
-let exitOnSubgraphFailure;
-if (process.env.EXIT_ON_SUBGRAPH_FAILURE) {
-  exitOnSubgraphFailure = process.env.EXIT_ON_SUBGRAPH_FAILURE === 'true' ? true : false;
-} else {
-  exitOnSubgraphFailure = false;
-}
+export const credentialMode = credentialModes[0]!;
 
 export const env = {
-  KEEPER_INTERVAL_MS: Number(process.env.KEEPER_INTERVAL_MS),
-  VAULT_ADDRESS: process.env.VAULT_ADDRESS,
-  VAULT_AUTH_ADDRESS: process.env.VAULT_AUTH_ADDRESS,
-  PRIVATE_KEY: process.env.PRIVATE_KEY,
-  OPTIMAL_BUCKET_DIFF: BigInt(process.env.OPTIMAL_BUCKET_DIFF!),
-  ORACLE_API_URL: process.env.ORACLE_API_URL,
-  RPC_URL: process.env.RPC_URL,
-  QUOTE_TOKEN_ADDRESS: process.env.QUOTE_TOKEN_ADDRESS!.toLowerCase(),
-  CONFIRMATIONS: process.env.CONFIRMATIONS,
-  BUFFER_PADDING: BigInt(bufferPadding),
-  GAS_BUFFER: gasBuffer,
-  DEFAULT_GAS: BigInt(defaultGas),
-  MIN_MOVE_AMOUNT: BigInt(minAmount),
+  RPC_URL: process.env.RPC_URL!,
+  PRIVATE_KEY,
+  KEYSTORE_PATH,
+  REMOTE_SIGNER_URL,
+  REMOTE_SIGNER_ADDRESS,
+  REMOTE_SIGNER_ALLOW_INSECURE,
+  REMOTE_SIGNER_AUTH_TOKEN,
+  REMOTE_SIGNER_TLS_CLIENT_CERT,
+  REMOTE_SIGNER_TLS_CLIENT_KEY,
+  REMOTE_SIGNER_TLS_CLIENT_KEY_PASSWORD,
+  REMOTE_SIGNER_TLS_CA,
   ORACLE_API_KEY: process.env.ORACLE_API_KEY,
   ORACLE_API_TIER: process.env.ORACLE_API_TIER,
-  ONCHAIN_ORACLE_PRIMARY: process.env.ONCHAIN_ORACLE_PRIMARY === 'true' ? true : false,
-  ONCHAIN_ORACLE_ADDRESS: process.env.ONCHAIN_ORACLE_ADDRESS,
-  ONCHAIN_ORACLE_MAX_STALENESS: process.env.ONCHAIN_ORACLE_MAX_STALENESS
-    ? Number(process.env.ONCHAIN_ORACLE_MAX_STALENESS)
-    : null,
-  LOG_LEVEL: process.env.LOG_LEVEL,
-  SUBGRAPH_URL: process.env.SUBGRAPH_URL,
-  MIN_TIME_SINCE_BANKRUPTCY: BigInt(minTimeSinceBankruptcy),
-  MAX_AUCTION_AGE: Number(maxAuctionAge),
-  FUTURE_SKEW_TOLERANCE: Number(futureSkewTolerance),
-  EXIT_ON_SUBGRAPH_FAILURE: exitOnSubgraphFailure,
-  CHAIN_ID: Number(process.env.CHAIN_ID),
-  FIXED_PRICE: process.env.FIXED_PRICE ? Number(process.env.FIXED_PRICE) : undefined,
-  HALT_KEEPER_IF_LUP_BELOW_HTP: process.env.HALT_KEEPER_IF_LUP_BELOW_HTP === 'false' ? false : true,
 };

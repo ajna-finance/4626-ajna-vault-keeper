@@ -1,15 +1,16 @@
-import { vaultAbi } from '../abi/Vault';
-import { mockVaultAbi } from '../../test/mocks/abi/MockVault.ts';
+import { vaultAbi } from '../abi/Vault.ts';
 import { bufferAbi } from '../abi/Buffer.ts';
-import { mockBufferAbi } from '../../test/mocks/abi/MockBuffer.ts';
-import { chronicleAbi } from '../abi/Chronicle';
-import { mockChronicleAbi } from '../../test/mocks/abi/MockChronicle.ts';
-import { poolInfoUtilsAbi } from '../abi/PoolInfoUtils';
-import { mockPoolInfoUtilsAbi } from '../../test/mocks/abi/MockPoolInfoUtils.ts';
-import { vaultAuthAbi } from '../abi/VaultAuth';
-import { mockVaultAuthAbi } from '../../test/mocks/abi/MockVaultAuth.ts';
+import { chronicleAbi } from '../abi/Chronicle.ts';
+import { poolInfoUtilsAbi } from '../abi/PoolInfoUtils.ts';
+import { vaultAuthAbi } from '../abi/VaultAuth.ts';
 import { poolAbi } from '../abi/Pool.ts';
-import { mockPoolAbi } from '../../test/mocks/abi/MockPool.ts';
+import { eulerEarnAbi } from '../abi/EulerEarn.ts';
+import { mockVaultAbi } from '../abi/mock/MockVault.ts';
+import { mockBufferAbi } from '../abi/mock/MockBuffer.ts';
+import { mockChronicleAbi } from '../abi/mock/MockChronicle.ts';
+import { mockPoolInfoUtilsAbi } from '../abi/mock/MockPoolInfoUtils.ts';
+import { mockVaultAuthAbi } from '../abi/mock/MockVaultAuth.ts';
+import { mockPoolAbi } from '../abi/mock/MockPool.ts';
 import type { Abi } from 'viem';
 
 type Variant = { real: Abi; mock?: Abi };
@@ -22,6 +23,7 @@ export const abis = {
   buffer: { real: bufferAbi, mock: mockBufferAbi },
   poolInfoUtils: { real: poolInfoUtilsAbi, mock: mockPoolInfoUtilsAbi },
   pool: { real: poolAbi, mock: mockPoolAbi },
+  metavault: { real: eulerEarnAbi, mock: eulerEarnAbi },
 } as const satisfies Record<string, AbiEntry>;
 
 export type ContractAbiKey = keyof typeof abis;

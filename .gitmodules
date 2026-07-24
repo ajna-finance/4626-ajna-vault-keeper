@@ -4,3 +4,9 @@
 [submodule "lib/4626-ajna-vault"]
 	path = lib/4626-ajna-vault
 	url = https://github.com/ajna-finance/4626-ajna-vault
+[submodule "lib/Aave-Vault"]
+	path = lib/Aave-Vault
+	url = https://github.com/aave/Aave-Vault
+[submodule "lib/euler-earn"]
+	path = lib/euler-earn
+	url = https://github.com/euler-xyz/euler-earn

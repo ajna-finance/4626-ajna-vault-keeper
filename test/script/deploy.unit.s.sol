@@ -37,6 +37,7 @@ contract DeployScript is Script, StdCheats {
         mockVaultAddress = address(new MockVault(address(0)));
         mockVaultAuthAddress = address(new MockVaultAuth());
         mockChronicleAddress = address(new MockChronicle());
+        address mockChronicleQuoteAddress = address(new MockChronicle());
 
         vaultAuth.setBufferRatio(5000);
         vaultAuth.setKeeper(deployerAddress, true);
@@ -51,6 +52,7 @@ contract DeployScript is Script, StdCheats {
             "MOCK_VAULT_ADDRESS=", vm.toString(mockVaultAddress), "\n"
             "MOCK_VAULT_AUTH_ADDRESS=", vm.toString(mockVaultAuthAddress), "\n"
             "MOCK_CHRONICLE_ADDRESS=", vm.toString(mockChronicleAddress), "\n"
+            "MOCK_CHRONICLE_QUOTE_ADDRESS=", vm.toString(mockChronicleQuoteAddress), "\n"
         );
 
         vm.writeFile("test/script/test-addresses.env", addresses);

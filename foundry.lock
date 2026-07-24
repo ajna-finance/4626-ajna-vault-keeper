@@ -1,0 +1,14 @@
+{
+  "lib/4626-ajna-vault": {
+    "rev": "bd09f3d150f0baed29ad365fe9ce9d8ca3cd1152"
+  },
+  "lib/Aave-Vault": {
+    "rev": "104d6794dc58d8c86239ea21e7301de05208be99"
+  },
+  "lib/euler-earn": {
+    "rev": "b2fd6e699ee20bcfe7459f375b3cee5d2fa53345"
+  },
+  "lib/forge-std": {
+    "rev": "17a9b2398a7d629931dc66a168a098d051d53dc6"
+  }
+}

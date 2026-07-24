@@ -377,6 +377,13 @@ export const vaultAbi = [
   },
   {
     type: 'function',
+    name: 'AUTH',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+  },
+  {
+    type: 'function',
     name: 'bufferLps',
     stateMutability: 'view',
     inputs: [],

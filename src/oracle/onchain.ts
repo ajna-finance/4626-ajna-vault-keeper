@@ -1,55 +1,54 @@
-import { getAbi } from '../utils/abi';
-import { getAddress } from '../utils/address';
-import { client, readOnlyClient } from '../utils/client';
-import { env } from '../utils/env';
-import { log } from '../utils/logger';
+import { getAbi } from '../utils/abi.ts';
+import { getAddress } from '../utils/address.ts';
+import { client, readOnlyClient } from '../utils/client.ts';
+import { getChainTime } from '../utils/chainTime.ts';
+import { config } from '../utils/config.ts';
+import { log } from '../utils/logger.ts';
+import { quotePerCollateralWad } from './denominate.ts';
 import type { Address } from 'viem';
 
 type OracleData = readonly [bigint, bigint];
-type PriceData = {
-  value: OracleData;
-  client: typeof client | typeof readOnlyClient;
-};
 
-const MAX_STALENESS_SECS = BigInt(env.ONCHAIN_ORACLE_MAX_STALENESS ?? '0');
-const FUTURE_SKEW_TOLERANCE_SECS = BigInt(env.FUTURE_SKEW_TOLERANCE);
+const FUTURE_SKEW_TOLERANCE_SECS = BigInt(config.oracle.futureSkewTolerance);
 
-export async function getOnchainPrice(): Promise<bigint> {
-  if (!env.ONCHAIN_ORACLE_ADDRESS) throw new Error('onchain oracle address is undefined');
+export async function getOnchainPrice(collateralFeedAddress?: Address): Promise<bigint> {
+  const collateralFeedConfigured = collateralFeedAddress ?? config.oracle.onchainCollateralAddress;
+  if (!collateralFeedConfigured || !config.oracle.onchainQuoteAddress) {
+    throw new Error('onchain oracle addresses are undefined');
+  }
 
-  const priceData = await _queryChronicle();
-  const [price, rawAge] = priceData.value;
-  const latestBlock = await priceData.client.getBlock({ blockTag: 'latest' });
-  const latestBlockTimestamp = latestBlock.timestamp;
-  const age = latestBlockTimestamp - rawAge;
+  const collateralFeed = await getAddress('chronicleCollateral', collateralFeedAddress);
+  const quoteFeed = await getAddress('chronicleQuote');
 
-  checkForFutureTimestamp(rawAge, latestBlockTimestamp);
-  checkForStaleTimestamp(age);
+  const [[collateralUsd, collateralAge], [quoteUsd, quoteAge]] = await Promise.all([
+    _queryChronicle(collateralFeed),
+    _queryChronicle(quoteFeed),
+  ]);
+  const latestBlockTimestamp = await getChainTime();
 
-  return price;
+  for (const rawAge of [collateralAge, quoteAge]) {
+    checkForFutureTimestamp(rawAge, latestBlockTimestamp);
+    checkForStaleTimestamp(latestBlockTimestamp - rawAge);
+  }
+
+  return quotePerCollateralWad(collateralUsd, quoteUsd);
 }
 
-export async function _queryChronicle(): Promise<PriceData> {
+export async function _queryChronicle(feedAddress: Address): Promise<OracleData> {
   const queryData = {
-    address: (await getAddress('chronicle')) as Address,
+    address: feedAddress,
     abi: getAbi('chronicle'),
     functionName: 'readWithAge',
   } as const;
 
   try {
-    return {
-      value: (await client.readContract(queryData)) as OracleData,
-      client,
-    };
+    return (await client.readContract(queryData)) as OracleData;
   } catch {
     log.info(
       { event: 'chronicle_read' },
       'account not tolled by chronicle, falling back to read-only client',
     );
-    return {
-      value: (await readOnlyClient.readContract(queryData)) as OracleData,
-      client: readOnlyClient,
-    };
+    return (await readOnlyClient.readContract(queryData)) as OracleData;
   }
 }
 
@@ -60,7 +59,10 @@ function checkForFutureTimestamp(rawAge: bigint, latestBlockTimestamp: bigint) {
 }
 
 function checkForStaleTimestamp(age: bigint) {
-  if (MAX_STALENESS_SECS > 0n && age > MAX_STALENESS_SECS) {
+  const maxStalenessSecs =
+    config.oracle.onchainMaxStaleness == null ? null : BigInt(config.oracle.onchainMaxStaleness);
+
+  if (maxStalenessSecs != null && age > maxStalenessSecs) {
     throw new Error('onchain oracle price is stale');
   }
 }
